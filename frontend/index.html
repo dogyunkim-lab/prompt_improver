@@ -71,6 +71,41 @@ h1, h2, h3, h4 { font-weight: 600; }
 .run-badge.failed { background: #f38ba8; color: #1e1e2e; }
 .run-badge.pending { background: #45475a; color: #cdd6f4; }
 
+.task-edit-btn {
+  display: none; align-items: center; justify-content: center;
+  width: 16px; height: 16px; border-radius: 3px; border: none;
+  background: transparent; color: #6c7086; font-size: 12px; line-height: 1;
+  cursor: pointer; flex-shrink: 0; padding: 0;
+}
+.task-edit-btn:hover { background: rgba(203,166,247,0.2); color: #cba6f7; }
+.task-row:hover .task-edit-btn { display: flex; }
+
+.run-delete-btn {
+  display: none; align-items: center; justify-content: center;
+  width: 14px; height: 14px; border-radius: 3px; border: none;
+  background: transparent; color: #6c7086; font-size: 11px; line-height: 1;
+  cursor: pointer; flex-shrink: 0; padding: 0; margin-left: 4px;
+}
+.run-delete-btn:hover { background: #f38ba820; color: #f38ba8; }
+.run-row:hover .run-delete-btn { display: flex; }
+
+.run-meta { font-size: 10px; color: #6c7086; margin-top: 2px; }
+
+.sidebar-search {
+  margin: 8px 12px 4px; padding: 6px 10px; background: #313244; color: #cdd6f4;
+  border: 1px solid #45475a; border-radius: 6px; font-size: 12px;
+  width: calc(100% - 24px); display: block;
+}
+.sidebar-search::placeholder { color: #6c7086; }
+.sidebar-search:focus { border-color: #cba6f7; outline: none; }
+
+.btn-icon {
+  padding: 5px 9px; background: transparent; color: #888; border-radius: 6px;
+  font-size: 13px; border: 1.5px solid #e0ddd4; transition: background 0.15s; line-height: 1;
+}
+.btn-icon:hover { background: rgba(0,0,0,0.05); }
+.btn-icon:disabled { opacity: 0.4; cursor: not-allowed; }
+
 /* ── Main ── */
 #main { flex: 1; display: flex; flex-direction: column; overflow: hidden; background: #f5f5f0; }
 
@@ -352,6 +387,7 @@ h1, h2, h3, h4 { font-weight: 600; }
       <h2>Prompt Improver</h2>
       <p>LLMOps 실험 관리 도구</p>
     </div>
+    <input type="text" id="task-search" class="sidebar-search" placeholder="실험 검색..." />
     <button id="btn-new-task">+ 새 실험 만들기</button>
     <div id="task-list"></div>
   </div>
@@ -369,12 +405,15 @@ h1, h2, h3, h4 { font-weight: 600; }
       <!-- Top Bar -->
       <div id="top-bar">
         <div id="top-bar-left">
-          <h3 id="top-bar-title">실험명</h3>
+          <div style="display:flex;align-items:center;gap:8px;">
+            <h3 id="top-bar-title">실험명</h3>
+            <button class="btn-icon" id="btn-edit-task" title="Task 편집">✎</button>
+          </div>
           <p id="top-bar-meta">Run 1 · 2024-01-01</p>
         </div>
         <div id="top-bar-right">
-          <button class="btn-secondary" id="btn-zero-run">제로베이스 새 Run</button>
-          <button class="btn-primary" id="btn-continue-run">이어서 새 Run</button>
+          <button class="btn-icon" id="btn-export" disabled>⬇ 내보내기</button>
+          <button class="btn-primary" id="btn-new-run">+ 새 Run</button>
         </div>
       </div>
       <!-- Phase Tabs -->
@@ -464,6 +503,16 @@ h1, h2, h3, h4 { font-weight: 600; }
                   <tr><td colspan="6" style="text-align:center;color:#aaa;padding:20px;">데이터 없음</td></tr>
                 </tbody>
               </table>
+            </div>
+          </div>
+
+          <div class="progress-wrap hidden" id="p1-progress-wrap">
+            <div class="progress-label">
+              <span>오답/과답 케이스 분석</span>
+              <span id="p1-progress-text">0 / 0</span>
+            </div>
+            <div class="progress-bar-bg">
+              <div class="progress-bar-fill" id="p1-progress-fill" style="width:0%"></div>
             </div>
           </div>
 
@@ -708,23 +757,36 @@ h1, h2, h3, h4 { font-weight: 600; }
   </div>
 </div>
 
+<!-- ══════════ MODAL: Task 편집 ══════════ -->
+<div class="modal-overlay" id="modal-edit-task">
+  <div class="modal">
+    <h3>Task 편집</h3>
+    <div class="form-group">
+      <label>Task명 *</label>
+      <input type="text" class="form-input" id="et-name" placeholder="실험 이름 입력" />
+    </div>
+    <div class="form-group">
+      <label>설명</label>
+      <input type="text" class="form-input" id="et-desc" placeholder="실험에 대한 설명" />
+    </div>
+    <div class="form-group">
+      <label>요약 유형</label>
+      <input type="text" class="form-input" id="et-type" placeholder="예: 불편사항 요약" />
+    </div>
+    <div class="modal-footer">
+      <button class="btn-secondary" id="et-cancel">취소</button>
+      <button class="btn-primary" id="et-submit">저장</button>
+    </div>
+  </div>
+</div>
+
 <!-- ══════════ MODAL: 새 Run 시작 ══════════ -->
 <div class="modal-overlay" id="modal-new-run">
   <div class="modal">
     <h3>새 Run 시작</h3>
-    <div class="form-group">
-      <label>시작 방식</label>
-      <div class="radio-group" id="nr-radio-group">
-        <label class="radio-item">
-          <input type="radio" name="run-mode" value="zero" checked />
-          제로베이스로 시작
-        </label>
-        <label class="radio-item" id="nr-continue-option">
-          <input type="radio" name="run-mode" value="continue" />
-          <span id="nr-continue-label">이어서 시작 (Run N 기반)</span>
-        </label>
-      </div>
-    </div>
+    <p style="font-size:12px;color:#888;margin-bottom:16px;line-height:1.6;">
+      Phase 1부터 새로 시작합니다. Judge JSON을 미리 업로드하거나 Phase 1에서 나중에 업로드할 수 있습니다.
+    </p>
     <div class="form-group">
       <label>Judge JSON 업로드 (선택)</label>
       <div class="file-drop" id="nr-file-drop" onclick="document.getElementById('nr-file-input').click()">
@@ -735,7 +797,7 @@ h1, h2, h3, h4 { font-weight: 600; }
     </div>
     <div class="modal-footer">
       <button class="btn-secondary" id="nr-cancel">취소</button>
-      <button class="btn-primary" id="nr-submit">실험 시작</button>
+      <button class="btn-primary" id="nr-submit">시작</button>
     </div>
   </div>
 </div>
@@ -755,7 +817,9 @@ const state = {
   difyConnections: {},  // candidateId -> boolean
   p1BucketChart: null,
   p5TrendChart: null,
-  submitting: false
+  submitting: false,
+  taskFilter: '',
+  expandedRunTaskIds: {}
 };
 
 // ════════════════════════════════════════════
@@ -806,11 +870,14 @@ function restoreSelection() {
 function renderTaskList() {
   const container = document.getElementById('task-list');
   container.innerHTML = '';
-  if (!state.tasks.length) {
+  const filtered = state.taskFilter
+    ? state.tasks.filter(t => t.name.toLowerCase().includes(state.taskFilter.toLowerCase()))
+    : state.tasks;
+  if (!filtered.length) {
     container.innerHTML = '<div style="padding:16px 14px;color:#6c7086;font-size:12px;">실험이 없습니다.</div>';
     return;
   }
-  state.tasks.forEach(task => {
+  filtered.forEach(task => {
     const isActive = task.id == state.selectedTaskId;
     const div = document.createElement('div');
     div.className = 'task-item';
@@ -821,9 +888,14 @@ function renderTaskList() {
       <span class="task-dot"></span>
       <span class="task-name" title="${esc(task.name)}">${esc(task.name)}</span>
       <span class="task-chevron ${isActive ? 'open' : ''}">▶</span>
+      <button class="task-edit-btn" title="편집">✎</button>
       <button class="task-delete-btn" title="삭제">✕</button>
     `;
     row.addEventListener('click', () => onTaskClick(task));
+    row.querySelector('.task-edit-btn').addEventListener('click', (e) => {
+      e.stopPropagation();
+      openEditTaskModal(task);
+    });
     row.querySelector('.task-delete-btn').addEventListener('click', (e) => {
       e.stopPropagation();
       deleteTask(task);
@@ -834,16 +906,55 @@ function renderTaskList() {
     if (isActive && task.runs && task.runs.length) {
       const runList = document.createElement('div');
       runList.className = 'run-list';
-      task.runs.forEach(run => {
+      const allRuns = task.runs;
+      const MAX_RUNS = 5;
+      const isExpanded = !!state.expandedRunTaskIds[task.id];
+      const runsToShow = (!isExpanded && allRuns.length > MAX_RUNS)
+        ? allRuns.slice(-MAX_RUNS)
+        : allRuns;
+      const hiddenCount = allRuns.length - runsToShow.length;
+
+      if (hiddenCount > 0) {
+        const moreRow = document.createElement('div');
+        moreRow.style.cssText = 'padding:4px 12px;font-size:11px;color:#6c7086;cursor:pointer;';
+        moreRow.textContent = `↑ ${hiddenCount}개 더 보기`;
+        moreRow.addEventListener('click', (e) => {
+          e.stopPropagation();
+          state.expandedRunTaskIds[task.id] = true;
+          renderTaskList();
+        });
+        runList.appendChild(moreRow);
+      } else if (isExpanded && allRuns.length > MAX_RUNS) {
+        const collapseRow = document.createElement('div');
+        collapseRow.style.cssText = 'padding:4px 12px;font-size:11px;color:#6c7086;cursor:pointer;';
+        collapseRow.textContent = '↓ 접기';
+        collapseRow.addEventListener('click', (e) => {
+          e.stopPropagation();
+          delete state.expandedRunTaskIds[task.id];
+          renderTaskList();
+        });
+        runList.appendChild(collapseRow);
+      }
+
+      runsToShow.forEach(run => {
         const isRunActive = run.id == state.selectedRunId;
         const rr = document.createElement('div');
         rr.className = 'run-row' + (isRunActive ? ' active' : '');
         const badge = getRunBadge(run);
+        const dateLabel = run.created_at ? fmtDate(run.created_at) : '';
         rr.innerHTML = `
-          <span class="run-label">Run ${run.run_number} — ${run.mode === 'zero' ? '제로' : '계속'}</span>
+          <div>
+            <span class="run-label">Run ${run.run_number}</span>
+            ${dateLabel ? `<div class="run-meta">${dateLabel}</div>` : ''}
+          </div>
           <span class="run-badge ${badge.cls}">${badge.text}</span>
+          <button class="run-delete-btn" title="삭제">✕</button>
         `;
         rr.addEventListener('click', (e) => { e.stopPropagation(); onRunClick(task.id, run.id); });
+        rr.querySelector('.run-delete-btn').addEventListener('click', (e) => {
+          e.stopPropagation();
+          deleteRun(task.id, run);
+        });
         runList.appendChild(rr);
       });
       div.appendChild(runList);
@@ -854,7 +965,7 @@ function renderTaskList() {
 }
 
 function getRunBadge(run) {
-  if (run.status === 'running') return { cls: 'running', text: '진행중' };
+  if (run.status && run.status.includes('running')) return { cls: 'running', text: '진행중' };
   if (run.status === 'failed')  return { cls: 'failed',  text: '실패' };
   if (run.score_total != null) return { cls: 'score', text: Math.round(run.score_total * 100) + '%' };
   return { cls: 'pending', text: '대기' };
@@ -983,8 +1094,15 @@ function updateTopBar() {
   const taskName = task ? task.name : '실험';
   const runNum = rd ? rd.run_number : '?';
   const createdAt = rd && rd.created_at ? new Date(rd.created_at).toLocaleString('ko-KR') : '';
+  const modeLabel = rd && rd.start_mode === 'zero' ? '제로' : rd && rd.start_mode ? '이어서' : '';
   document.getElementById('top-bar-title').textContent = taskName;
-  document.getElementById('top-bar-meta').textContent = `Run ${runNum}${createdAt ? ' · ' + createdAt : ''}`;
+  const metaParts = [`Run ${runNum}`];
+  if (modeLabel) metaParts.push(modeLabel);
+  if (rd && rd.total_cases) metaParts.push(`${rd.total_cases}개 케이스`);
+  if (createdAt) metaParts.push(createdAt);
+  document.getElementById('top-bar-meta').textContent = metaParts.join(' · ');
+  const exportBtn = document.getElementById('btn-export');
+  if (exportBtn) exportBtn.disabled = !state.selectedRunId;
 }
 
 function updatePhaseTabsFromRunData() {
@@ -1436,6 +1554,23 @@ async function runPhase(num) {
   setPhaseStatus(num, 'running');
   clearLog(`p${num}-log`);
 
+  // 즉시 사이드바 배지 갱신
+  const _runningTask = state.tasks.find(t => t.id == state.selectedTaskId);
+  if (_runningTask) {
+    const _runningRun = _runningTask.runs && _runningTask.runs.find(r => r.id == state.selectedRunId);
+    if (_runningRun) { _runningRun.status = `phase${num}_running`; renderTaskList(); }
+  }
+
+  // Phase 1: 프로그레스 바 초기화
+  if (num === 1) {
+    const pw = document.getElementById('p1-progress-wrap');
+    if (pw) pw.classList.remove('hidden');
+    const pt = document.getElementById('p1-progress-text');
+    if (pt) pt.textContent = '준비 중...';
+    const pf = document.getElementById('p1-progress-fill');
+    if (pf) pf.style.width = '0%';
+  }
+
   try {
     let endpoint;
     if (num === 3) {
@@ -1458,6 +1593,7 @@ function connectSSE(num) {
   if (state.sseConnections[num]) {
     state.sseConnections[num].close();
   }
+  appendLog(`p${num}-log`, 'info', '실행 스트림 연결 중...');
   const evtSrc = new EventSource(`/api/runs/${state.selectedRunId}/phase/${num}/stream`);
   state.sseConnections[num] = evtSrc;
 
@@ -1487,7 +1623,12 @@ function handleSSEMessage(num, msg) {
       const total = msg.total || 1;
       const curr = msg.current || 0;
       const pct = Math.round((curr / total) * 100);
-      if (num === 3) {
+      if (num === 1) {
+        const pw = document.getElementById('p1-progress-wrap');
+        if (pw) pw.classList.remove('hidden');
+        document.getElementById('p1-progress-text').textContent = `${curr} / ${total}`;
+        document.getElementById('p1-progress-fill').style.width = pct + '%';
+      } else if (num === 3) {
         document.getElementById('p3-progress-text').textContent = `${curr} / ${total}`;
         document.getElementById('p3-progress-fill').style.width = pct + '%';
       } else if (num === 4) {
@@ -1547,8 +1688,26 @@ async function onPhaseSSEDone(num, status) {
   const btn = document.getElementById(`btn-p${num}-run`);
   if (btn) btn.disabled = false;
 
-  // Hide run button after start (show as completed)
-  if (isDone && btn) btn.classList.add('hidden');
+  // Phase 1 프로그레스 바 완료 처리
+  if (num === 1) {
+    if (isDone) {
+      const pf = document.getElementById('p1-progress-fill');
+      if (pf) pf.style.width = '100%';
+      const pt = document.getElementById('p1-progress-text');
+      if (pt) pt.textContent = '완료';
+    } else {
+      const pw = document.getElementById('p1-progress-wrap');
+      if (pw) pw.classList.add('hidden');
+    }
+  }
+
+  // Hide run button after success; show '재시도' on failure
+  if (isDone && btn) {
+    btn.classList.add('hidden');
+  } else if (!isDone && btn) {
+    btn.textContent = '재시도';
+    btn.classList.remove('hidden');
+  }
 
   // Unlock next phase
   if (isDone && num < 6) setPhaseStatus(num + 1, state.phaseStatus[num + 1] || 'idle');
@@ -1591,6 +1750,110 @@ function replayLogs(logId, logs) {
 }
 
 // ════════════════════════════════════════════
+// F1: TASK 편집
+// ════════════════════════════════════════════
+function openEditTaskModal(task) {
+  document.getElementById('et-name').value = task.name || '';
+  document.getElementById('et-desc').value = task.description || '';
+  document.getElementById('et-type').value = task.generation_task || '';
+  document.getElementById('modal-edit-task').dataset.taskId = task.id;
+  openModal('modal-edit-task');
+}
+
+async function submitEditTask() {
+  const id = document.getElementById('modal-edit-task').dataset.taskId;
+  const name = document.getElementById('et-name').value.trim();
+  if (!name) { alert('Task명을 입력하세요.'); return; }
+  const desc = document.getElementById('et-desc').value.trim();
+  const type = document.getElementById('et-type').value.trim();
+  try {
+    const updated = await apiFetch(`/api/tasks/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, description: desc || null, generation_task: type || null })
+    });
+    const idx = state.tasks.findIndex(t => t.id == id);
+    if (idx >= 0) {
+      state.tasks[idx] = { ...state.tasks[idx], name: updated.name, description: updated.description, generation_task: updated.generation_task };
+    }
+    renderTaskList();
+    updateTopBar();
+    closeModal('modal-edit-task');
+  } catch (e) {
+    alert('편집 오류: ' + e.message);
+  }
+}
+
+document.getElementById('btn-edit-task').addEventListener('click', () => {
+  const task = state.tasks.find(t => t.id == state.selectedTaskId);
+  if (task) openEditTaskModal(task);
+});
+document.getElementById('et-cancel').addEventListener('click', () => closeModal('modal-edit-task'));
+document.getElementById('modal-edit-task').addEventListener('click', (e) => {
+  if (e.target === e.currentTarget) closeModal('modal-edit-task');
+});
+document.getElementById('et-submit').addEventListener('click', submitEditTask);
+
+// ════════════════════════════════════════════
+// F2: RUN 삭제
+// ════════════════════════════════════════════
+async function deleteRun(taskId, run) {
+  if (!confirm(`Run ${run.run_number}을 삭제하시겠습니까?\n모든 Phase 데이터가 함께 삭제됩니다.`)) return;
+  try {
+    await apiFetch(`/api/runs/${run.id}`, { method: 'DELETE' });
+    const task = state.tasks.find(t => t.id == taskId);
+    if (task) task.runs = task.runs.filter(r => r.id !== run.id);
+
+    if (state.selectedRunId == run.id) {
+      const remaining = task && task.runs && task.runs.length ? task.runs : [];
+      if (remaining.length > 0) {
+        selectRun(taskId, remaining[remaining.length - 1].id, 1);
+      } else {
+        state.selectedRunId = null;
+        state.runData = null;
+        localStorage.removeItem('lastRunId');
+        renderTaskList();
+        if (task) showNoRunState(task);
+      }
+    } else {
+      renderTaskList();
+    }
+  } catch (e) {
+    alert('삭제 오류: ' + e.message);
+  }
+}
+
+// ════════════════════════════════════════════
+// F6: 결과 내보내기
+// ════════════════════════════════════════════
+function exportRunData() {
+  if (!state.runData || !state.selectedRunId) return;
+  const task = state.tasks.find(t => t.id == state.runData.task_id);
+  const taskName = (task ? task.name : 'task').replace(/[^\w가-힣]/g, '_');
+  const date = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+  const fileName = `run_${state.selectedRunId}_${taskName}_${date}.json`;
+  const blob = new Blob([JSON.stringify(state.runData, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = fileName;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+document.getElementById('btn-export').addEventListener('click', exportRunData);
+
+// ════════════════════════════════════════════
+// F7: TASK 검색
+// ════════════════════════════════════════════
+document.getElementById('task-search').addEventListener('input', (e) => {
+  state.taskFilter = e.target.value;
+  renderTaskList();
+});
+
+// ════════════════════════════════════════════
 // MODAL: NEW TASK
 // ════════════════════════════════════════════
 document.getElementById('btn-new-task').addEventListener('click', () => {
@@ -1631,30 +1894,10 @@ document.getElementById('nt-submit').addEventListener('click', async () => {
 // ════════════════════════════════════════════
 // MODAL: NEW RUN
 // ════════════════════════════════════════════
-let _newRunMode = 'zero'; // 'zero' | 'continue'
-
-function openNewRunModal(mode) {
-  _newRunMode = mode;
-  // Update radio
-  const radios = document.querySelectorAll('input[name="run-mode"]');
-  radios.forEach(r => { r.checked = r.value === mode; });
-  // Update continue label with current run number
-  if (state.runData) {
-    document.getElementById('nr-continue-label').textContent =
-      `이어서 시작 (Run ${state.runData.run_number} 기반)`;
-  }
-  openModal('modal-new-run');
-}
-
-document.getElementById('btn-zero-run').addEventListener('click', () => openNewRunModal('zero'));
-document.getElementById('btn-continue-run').addEventListener('click', () => openNewRunModal('continue'));
+document.getElementById('btn-new-run').addEventListener('click', () => openModal('modal-new-run'));
 document.getElementById('nr-cancel').addEventListener('click', () => closeModal('modal-new-run'));
 document.getElementById('modal-new-run').addEventListener('click', (e) => {
   if (e.target === e.currentTarget) closeModal('modal-new-run');
-});
-
-document.querySelectorAll('input[name="run-mode"]').forEach(r => {
-  r.addEventListener('change', () => { _newRunMode = r.value; });
 });
 
 document.getElementById('nr-file-input').addEventListener('change', function() {
@@ -1668,8 +1911,8 @@ document.getElementById('nr-submit').addEventListener('click', async () => {
   document.getElementById('nr-submit').disabled = true;
   try {
     const body = {
-      start_mode: _newRunMode,
-      base_run_id: _newRunMode === 'continue' ? state.selectedRunId : null
+      start_mode: 'zero',
+      base_run_id: null
     };
     const newRun = await apiFetch(`/api/tasks/${state.selectedTaskId}/runs`, {
       method: 'POST',
@@ -1752,6 +1995,13 @@ function setupFileDrop(dropId, inputId, nameId, onFile) {
 // ════════════════════════════════════════════
 // UTILITY
 // ════════════════════════════════════════════
+function fmtDate(dateStr) {
+  if (!dateStr) return '';
+  const d = new Date(dateStr);
+  if (isNaN(d)) return '';
+  return (d.getMonth() + 1).toString().padStart(2, '0') + '/' + d.getDate().toString().padStart(2, '0');
+}
+
 function esc(str) {
   return String(str)
     .replace(/&/g, '&amp;')

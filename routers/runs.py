@@ -55,6 +55,26 @@ async def create_run(task_id: int, body: RunCreate):
         await db.close()
 
 
+@router.delete("/api/runs/{run_id}")
+async def delete_run(run_id: int):
+    db = await get_db()
+    try:
+        async with db.execute("SELECT id FROM runs WHERE id=?", (run_id,)) as cursor:
+            if not await cursor.fetchone():
+                raise HTTPException(status_code=404, detail="Run not found")
+
+        await db.execute("DELETE FROM case_results WHERE run_id=?", (run_id,))
+        await db.execute("DELETE FROM phase_results WHERE run_id=?", (run_id,))
+        await db.execute("DELETE FROM prompt_candidates WHERE run_id=?", (run_id,))
+        await db.execute("DELETE FROM dify_connections WHERE run_id=?", (run_id,))
+        await db.execute("DELETE FROM case_deltas WHERE from_run_id=? OR to_run_id=?", (run_id, run_id))
+        await db.execute("DELETE FROM runs WHERE id=?", (run_id,))
+        await db.commit()
+        return {"ok": True}
+    finally:
+        await db.close()
+
+
 @router.get("/api/runs/{run_id}")
 async def get_run(run_id: int):
     db = await get_db()

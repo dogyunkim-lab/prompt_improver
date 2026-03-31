@@ -65,6 +65,43 @@ async def get_task(task_id: int):
         await db.close()
 
 
+class TaskUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    generation_task: Optional[str] = None
+
+
+@router.patch("/{task_id}")
+async def update_task(task_id: int, body: TaskUpdate):
+    db = await get_db()
+    try:
+        async with db.execute("SELECT id FROM tasks WHERE id=?", (task_id,)) as cursor:
+            if not await cursor.fetchone():
+                raise HTTPException(status_code=404, detail="Task not found")
+
+        updates = []
+        values = []
+        if body.name is not None:
+            updates.append("name=?")
+            values.append(body.name)
+        if body.description is not None:
+            updates.append("description=?")
+            values.append(body.description)
+        if body.generation_task is not None:
+            updates.append("generation_task=?")
+            values.append(body.generation_task)
+
+        if updates:
+            values.append(task_id)
+            await db.execute(f"UPDATE tasks SET {', '.join(updates)} WHERE id=?", values)
+            await db.commit()
+
+        async with db.execute("SELECT * FROM tasks WHERE id=?", (task_id,)) as cursor:
+            return dict(await cursor.fetchone())
+    finally:
+        await db.close()
+
+
 @router.delete("/{task_id}")
 async def delete_task(task_id: int):
     db = await get_db()
