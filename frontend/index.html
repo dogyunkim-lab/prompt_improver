@@ -440,6 +440,13 @@ h1, h2, h3, h4 { font-weight: 600; }
       <!-- Content -->
       <div id="content-area">
 
+        <!-- ──────── NO-RUN STATE ──────── -->
+        <div id="no-run-message" class="hidden" style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:300px;gap:16px;color:#888;">
+          <div style="font-size:40px;opacity:0.4;">🚀</div>
+          <p style="font-size:14px;">아직 Run이 없습니다.</p>
+          <p style="font-size:13px;color:#aaa;">상단의 <strong>+ 새 Run</strong> 버튼으로 첫 번째 실험을 시작하세요.</p>
+        </div>
+
         <!-- ──────── PHASE 1 ──────── -->
         <div class="phase-panel active" id="panel-1">
           <div id="p1-upload-section">
@@ -1062,18 +1069,12 @@ function showNoRunState(task) {
   // phase tabs 초기화
   for (let i = 1; i <= 6; i++) setPhaseStatus(i, 'idle');
 
-  // 콘텐츠 영역에 안내 메시지
+  // 콘텐츠 영역: 안내 메시지 표시 (panel-1 HTML 파괴 금지)
   document.querySelectorAll('.phase-panel').forEach(p => p.classList.remove('active'));
-  const panel = document.getElementById('panel-1');
-  if (panel) {
-    panel.classList.add('active');
-    panel.innerHTML = `
-      <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:300px;gap:16px;color:#888;">
-        <div style="font-size:40px;opacity:0.4;">🚀</div>
-        <p style="font-size:14px;">아직 Run이 없습니다.</p>
-        <p style="font-size:13px;color:#aaa;">상단의 <strong>제로베이스 새 Run</strong> 버튼으로 첫 번째 실험을 시작하세요.</p>
-      </div>`;
-  }
+  const noRunMsg = document.getElementById('no-run-message');
+  if (noRunMsg) noRunMsg.classList.remove('hidden');
+  const exportBtn = document.getElementById('btn-export');
+  if (exportBtn) exportBtn.disabled = true;
 }
 
 function showRunView(phase) {
@@ -1081,6 +1082,9 @@ function showRunView(phase) {
   const rv = document.getElementById('run-view');
   rv.classList.remove('hidden');
   rv.style.display = 'flex';
+
+  const noRunMsg = document.getElementById('no-run-message');
+  if (noRunMsg) noRunMsg.classList.add('hidden');
 
   updateTopBar();
   updatePhaseTabsFromRunData();
@@ -1870,24 +1874,32 @@ document.getElementById('nt-submit').addEventListener('click', async () => {
   if (!name) { alert('Task명을 입력하세요.'); return; }
   const desc = document.getElementById('nt-desc').value.trim();
   const type = document.getElementById('nt-type').value;
+  const submitBtn = document.getElementById('nt-submit');
   state.submitting = true;
-  document.getElementById('nt-submit').disabled = true;
+  submitBtn.disabled = true;
+  submitBtn.textContent = '생성 중...';
   try {
     const task = await apiFetch('/api/tasks', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name, description: desc, generation_task: type })
     });
-    state.tasks.push(task);
+    task.runs = [];
+    state.tasks = [task, ...state.tasks];
+    state.selectedTaskId = task.id;
+    state.selectedRunId = null;
+    state.runData = null;
     renderTaskList();
     closeModal('modal-new-task');
     document.getElementById('nt-name').value = '';
     document.getElementById('nt-desc').value = '';
+    showNoRunState(task);
   } catch (e) {
     alert('오류: ' + e.message);
   } finally {
     state.submitting = false;
-    document.getElementById('nt-submit').disabled = false;
+    submitBtn.disabled = false;
+    submitBtn.textContent = '만들기';
   }
 });
 
@@ -1906,38 +1918,55 @@ document.getElementById('nr-file-input').addEventListener('change', function() {
 setupFileDrop('nr-file-drop', 'nr-file-input', 'nr-file-name', () => {});
 
 document.getElementById('nr-submit').addEventListener('click', async () => {
-  if (state.submitting || !state.selectedTaskId) return;
-  state.submitting = true;
-  document.getElementById('nr-submit').disabled = true;
+  if (!state.selectedTaskId) return;
+  const submitBtn = document.getElementById('nr-submit');
+  if (submitBtn.disabled) return;
+
+  const file = document.getElementById('nr-file-input').files[0];
+  let newRunId = null;
+  let didUploadFile = false;
+
+  submitBtn.disabled = true;
+  submitBtn.textContent = 'Run 생성 중...';
+
   try {
-    const body = {
-      start_mode: 'zero',
-      base_run_id: null
-    };
     const newRun = await apiFetch(`/api/tasks/${state.selectedTaskId}/runs`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body)
+      body: JSON.stringify({ start_mode: 'zero', base_run_id: null })
     });
-    // Upload judge file if provided
-    const file = document.getElementById('nr-file-input').files[0];
-    if (file && newRun && newRun.id) {
+    newRunId = newRun && newRun.id;
+
+    if (file && newRunId) {
+      submitBtn.textContent = '파일 업로드 중...';
       const fd = new FormData();
       fd.append('file', file);
-      await apiFetch(`/api/runs/${newRun.id}/upload-judge`, { method: 'POST', body: fd });
+      await apiFetch(`/api/runs/${newRunId}/upload-judge`, { method: 'POST', body: fd });
+      didUploadFile = true;
     }
+
     closeModal('modal-new-run');
-    // Refresh tasks
+    document.getElementById('nr-file-input').value = '';
+    document.getElementById('nr-file-name').textContent = '';
+
+    submitBtn.textContent = '화면 로딩 중...';
     const freshTasks = await apiFetch('/api/tasks');
     state.tasks = Array.isArray(freshTasks) ? freshTasks : state.tasks;
-    if (newRun && newRun.id) {
-      selectRun(state.selectedTaskId, newRun.id, 1);
+
+    if (newRunId) {
+      await selectRun(state.selectedTaskId, newRunId, 1);
     }
   } catch (e) {
     alert('오류: ' + e.message);
+    newRunId = null;
   } finally {
-    state.submitting = false;
-    document.getElementById('nr-submit').disabled = false;
+    submitBtn.disabled = false;
+    submitBtn.textContent = '시작';
+  }
+
+  // 파일이 업로드됐으면 Phase 1 자동 시작
+  if (newRunId && didUploadFile) {
+    runPhase(1);
   }
 });
 
