@@ -107,13 +107,51 @@ async def run_phase1(run_id: int) -> AsyncGenerator[str, None]:
                     yield log_event("warn", f"케이스 {case.get('id', '?')} 분석 실패: {e}")
                     batch_results.append({"case_id": str(case.get("id", "")), "bucket": "prompt_missing"})
 
-                case_analyses.extend(batch_results)
-                yield progress_event(min(i + len(batch), error_count), error_count)
+            # BUG-9 fix: extend는 배치 루프 종료 후 한 번만 호출
+            case_analyses.extend(batch_results)
+            yield progress_event(min(i + len(batch), error_count), error_count)
 
         # 전체 패턴 요약
         yield log_event("info", "전체 패턴 요약 생성 중...")
         summary = await _summarize_all(case_analyses, error_count)
         yield log_event("ok", f"분석 완료 — 주요 이슈: {', '.join(summary.get('top_issues', []))}")
+
+        # BUG-10: baseline scores, cases, bucket_chart를 output_data에 포함
+        correct_count = sum(1 for c in judge_data if c.get("evaluation") == "정답")
+        over_count = sum(1 for c in judge_data if c.get("evaluation") == "과답")
+        wrong_count = sum(1 for c in judge_data if c.get("evaluation") == "오답")
+        summary["scores"] = {
+            "correct_plus_over": round((correct_count + over_count) / total_cases * 100, 1) if total_cases else 0,
+            "correct": round(correct_count / total_cases * 100, 1) if total_cases else 0,
+            "over": round(over_count / total_cases * 100, 1) if total_cases else 0,
+            "wrong": round(wrong_count / total_cases * 100, 1) if total_cases else 0,
+            "total": total_cases,
+        }
+
+        # bucket_id → bucket 레이블 조회용 맵
+        bucket_map = {str(a.get("case_id", "")): a.get("bucket", "") for a in case_analyses}
+        summary["cases"] = [
+            {
+                "id": str(c.get("id", "")),
+                "judge": c.get("evaluation", ""),
+                "bucket": bucket_map.get(str(c.get("id", "")), ""),
+                "stt_uncertain": "",
+                "summary": c.get("generated", ""),
+                "judge_disagreement": c.get("reason", ""),
+            }
+            for c in judge_data[:100]
+        ]
+
+        bucket_counts = summary.get("bucket_counts", {})
+        summary["bucket_chart"] = {
+            "labels": ["STT 오류", "프롬프트 누락", "모델 동작", "Judge 이견"],
+            "values": [
+                bucket_counts.get("stt_error", 0),
+                bucket_counts.get("prompt_missing", 0),
+                bucket_counts.get("model_behavior", 0),
+                bucket_counts.get("judge_dispute", 0),
+            ],
+        }
 
         await _mark_phase_completed(run_id, 1, summary)
         await db.execute("UPDATE runs SET status='phase1_done' WHERE id=?", (run_id,))

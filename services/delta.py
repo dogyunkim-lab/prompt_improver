@@ -6,7 +6,8 @@ async def compute_learning_rate(task_id: int, current_run_id: int) -> str:
     try:
         async with db.execute(
             """SELECT score_total FROM runs
-               WHERE task_id=? AND id != ? AND status='completed' AND score_total IS NOT NULL
+               WHERE task_id=? AND id != ? AND score_total IS NOT NULL
+               AND status IN ('completed','phase4_done','phase5_done','phase6_done')
                ORDER BY run_number""",
             (task_id, current_run_id)
         ) as cursor:
@@ -37,7 +38,8 @@ async def get_run_scores(task_id: int, exclude_run_id: int) -> list:
     try:
         async with db.execute(
             """SELECT id, run_number, score_total, score_correct, score_over
-               FROM runs WHERE task_id=? AND id != ? AND status='completed'
+               FROM runs WHERE task_id=? AND id != ? AND score_total IS NOT NULL
+               AND status IN ('completed','phase4_done','phase5_done','phase6_done')
                ORDER BY run_number""",
             (task_id, exclude_run_id)
         ) as cursor:
@@ -50,7 +52,9 @@ async def count_completed_runs(task_id: int, exclude_run_id: int) -> int:
     db = await get_db()
     try:
         async with db.execute(
-            "SELECT COUNT(*) as cnt FROM runs WHERE task_id=? AND id != ? AND status='completed'",
+            """SELECT COUNT(*) as cnt FROM runs
+               WHERE task_id=? AND id != ? AND score_total IS NOT NULL
+               AND status IN ('completed','phase4_done','phase5_done','phase6_done')""",
             (task_id, exclude_run_id)
         ) as cursor:
             row = await cursor.fetchone()

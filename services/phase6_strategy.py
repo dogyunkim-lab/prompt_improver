@@ -109,9 +109,18 @@ async def run_phase6(run_id: int) -> AsyncGenerator[str, None]:
 
         yield log_event("ok", f"전략 수립 완료: {result.get('strategy_type', 'unknown')}")
 
+        # BUG-6: 프론트 기대 필드명으로 매핑
+        frontend_result = {
+            "learning_rate": learning_rate,
+            "backprop": result.get("backprop_analysis", ""),
+            "effective": result.get("effective_elements", []),
+            "harmful": result.get("harmful_elements", []),
+            "next_direction": result.get("next_direction", ""),
+        }
+
         await db.execute(
             "UPDATE phase_results SET status='completed', output_data=?, completed_at=? WHERE run_id=? AND phase=6",
-            (json.dumps(result, ensure_ascii=False), datetime.utcnow().isoformat(), run_id)
+            (json.dumps(frontend_result, ensure_ascii=False), datetime.utcnow().isoformat(), run_id)
         )
         await db.execute(
             "UPDATE runs SET status='completed', completed_at=? WHERE id=?",
@@ -119,7 +128,7 @@ async def run_phase6(run_id: int) -> AsyncGenerator[str, None]:
         )
         await db.commit()
 
-        yield result_event(result)
+        yield result_event(frontend_result)
         yield done_event("completed")
 
     except Exception as e:

@@ -14,6 +14,32 @@ def load_prompt() -> str:
         return f.read()
 
 
+def _build_candidates_with_nodes(saved_candidates: list) -> list:
+    """DB rows → node_prompts 배열 변환 (BUG-7 공유 로직)"""
+    result = []
+    for cand in saved_candidates:
+        node_prompts = []
+        for label, content_key, reason_key in [
+            ("A", "node_a_prompt", "node_a_reasoning"),
+            ("B", "node_b_prompt", "node_b_reasoning"),
+            ("C", "node_c_prompt", "node_c_reasoning"),
+        ]:
+            if cand.get(content_key):
+                node_prompts.append({
+                    "label": label,
+                    "content": cand[content_key],
+                    "reasoning": bool(cand.get(reason_key)),
+                })
+        result.append({
+            "id": cand["id"],
+            "label": cand["candidate_label"],
+            "node_count": cand.get("node_count", len(node_prompts)),
+            "rationale": cand.get("design_rationale", ""),
+            "node_prompts": node_prompts,
+        })
+    return result
+
+
 def _extract_json(text: str) -> dict:
     try:
         start = text.find("{")
@@ -139,11 +165,22 @@ async def run_phase2(run_id: int) -> AsyncGenerator[str, None]:
 
         yield log_event("ok", f"{len(candidates)}개 프롬프트 후보 설계 완료")
 
+        # BUG-5: DB에서 저장된 candidates 조회 후 node_prompts 배열로 변환
+        async with db.execute(
+            "SELECT * FROM prompt_candidates WHERE run_id=? ORDER BY candidate_label",
+            (run_id,)
+        ) as cursor:
+            saved_candidates = [dict(row) for row in await cursor.fetchall()]
+
+        candidates_with_nodes = _build_candidates_with_nodes(saved_candidates)
+
         output = {
             "mode": design_mode,
             "learning_rate": learning_rate,
             "candidate_count": len(candidates),
-            "design_summary": result.get("design_summary", "")
+            "design_summary": result.get("design_summary", ""),
+            "spec_summary": result.get("spec_summary", ""),
+            "candidates": candidates_with_nodes,
         }
 
         async with db.execute(

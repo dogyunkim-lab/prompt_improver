@@ -127,7 +127,15 @@ Generated: {case.get('generated', '')}"""})
             await compute_and_save_deltas(run["task_id"], prev_row["id"], run_id)
             yield log_event("ok", "Delta 계산 완료")
 
-        output = scores
+        # BUG-2: 프론트 기대 필드명으로 변환 (correct_plus_over, correct, over, wrong, total)
+        frontend_scores = {
+            "correct_plus_over": scores["score_total"],
+            "correct": scores["score_correct"],
+            "over": scores["score_over"],
+            "wrong": round(100 - scores["score_correct"] - scores["score_over"], 1),
+            "total": scores["total"],
+        }
+        output = {"scores": frontend_scores}
         await db.execute(
             "UPDATE phase_results SET status='completed', output_data=?, completed_at=? WHERE run_id=? AND phase=4",
             (json.dumps(output), datetime.utcnow().isoformat(), run_id)

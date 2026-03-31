@@ -247,23 +247,34 @@ async def get_phase5(run_id: int):
 
         goal_achieved = scores["score_total"] >= 95.0
 
-        # Phase 5 결과 저장
+        # BUG-3: 프론트 기대 구조로 전면 수정
         output = {
-            "current_run": {
-                "score_total": scores["score_total"],
-                "score_correct": scores["score_correct"],
-                "score_over": scores["score_over"],
-                "score_wrong": round(100 - scores["score_correct"] - scores["score_over"], 1)
+            "scores": {
+                "correct_plus_over": scores["score_total"],
+                "correct": scores["score_correct"],
+                "over": scores["score_over"],
+                "wrong": round(100 - scores["score_correct"] - scores["score_over"], 1),
             },
-            "task_history": task_history,
-            "delta_summary": {
-                "improved": delta_rows.get("improved", 0),
-                "regressed": delta_rows.get("regressed", 0),
-                "unchanged": delta_rows.get("unchanged", 0)
+            "delta": {
+                "improve": delta_rows.get("improved", 0),
+                "regress": delta_rows.get("regressed", 0),
+                "same": delta_rows.get("unchanged", 0),
             },
-            "regressed_cases": regressed_cases,
+            "trend": {
+                "labels": [f"Run {r['run_number']}" for r in task_history],
+                "values": [round((r["score_total"] or 0) * 100, 1) for r in task_history],
+            },
+            "regressed_cases": [
+                {
+                    "id": r["case_id"],
+                    "prev_judge": r["prev"],
+                    "curr_judge": r["curr"],
+                    "reason": r["reason"],
+                }
+                for r in regressed_cases
+            ],
             "goal_achieved": goal_achieved,
-            "gap_to_goal": round(max(0, 95.0 - scores["score_total"]), 1)
+            "gap_to_goal": round(max(0, 95.0 - scores["score_total"]), 1),
         }
 
         await db.execute(

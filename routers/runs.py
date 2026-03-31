@@ -65,18 +65,60 @@ async def get_run(run_id: int):
             raise HTTPException(status_code=404, detail="Run not found")
         run = dict(run)
 
+        # BUG-4: phase_results → phases dict 변환 (output_data JSON 파싱 포함)
         async with db.execute(
             "SELECT * FROM phase_results WHERE run_id=? ORDER BY phase",
             (run_id,)
         ) as cursor:
-            run["phase_results"] = [dict(row) for row in await cursor.fetchall()]
+            phase_rows = [dict(row) for row in await cursor.fetchall()]
 
+        phases = {}
+        for pr in phase_rows:
+            phase_num = pr["phase"]
+            output_data = {}
+            if pr.get("output_data"):
+                try:
+                    output_data = json.loads(pr["output_data"])
+                except Exception:
+                    pass
+            phases[phase_num] = {"status": pr["status"], **output_data}
+
+        # BUG-7: prompt_candidates flat columns → node_prompts 배열 변환
         async with db.execute(
             "SELECT * FROM prompt_candidates WHERE run_id=? ORDER BY candidate_label",
             (run_id,)
         ) as cursor:
-            run["prompt_candidates"] = [dict(row) for row in await cursor.fetchall()]
+            candidates = [dict(row) for row in await cursor.fetchall()]
 
+        if candidates:
+            candidates_with_nodes = []
+            for cand in candidates:
+                node_prompts = []
+                for label, content_key, reason_key in [
+                    ("A", "node_a_prompt", "node_a_reasoning"),
+                    ("B", "node_b_prompt", "node_b_reasoning"),
+                    ("C", "node_c_prompt", "node_c_reasoning"),
+                ]:
+                    if cand.get(content_key):
+                        node_prompts.append({
+                            "label": label,
+                            "content": cand[content_key],
+                            "reasoning": bool(cand.get(reason_key)),
+                        })
+                candidates_with_nodes.append({
+                    "id": cand["id"],
+                    "label": cand["candidate_label"],
+                    "node_count": cand.get("node_count", len(node_prompts)),
+                    "rationale": cand.get("design_rationale", ""),
+                    "node_prompts": node_prompts,
+                })
+            # Phase 2 데이터에 candidates 주입 (output_data에 없을 경우 대비)
+            if 2 not in phases:
+                phases[2] = {"status": "completed"}
+            if not phases[2].get("candidates"):
+                phases[2]["candidates"] = candidates_with_nodes
+
+        run["phases"] = phases
         return run
     finally:
         await db.close()

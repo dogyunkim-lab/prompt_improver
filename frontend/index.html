@@ -691,11 +691,7 @@ h1, h2, h3, h4 { font-weight: 600; }
     </div>
     <div class="form-group">
       <label>요약 유형</label>
-      <select class="form-select" id="nt-type">
-        <option value="abstractive">Abstractive</option>
-        <option value="extractive">Extractive</option>
-        <option value="hybrid">Hybrid</option>
-      </select>
+      <input type="text" class="form-input" id="nt-type" placeholder="예: 불편사항 요약" />
     </div>
     <div class="modal-footer">
       <button class="btn-secondary" id="nt-cancel">취소</button>
@@ -847,7 +843,7 @@ function renderTaskList() {
 function getRunBadge(run) {
   if (run.status === 'running') return { cls: 'running', text: '진행중' };
   if (run.status === 'failed')  return { cls: 'failed',  text: '실패' };
-  if (run.score != null) return { cls: 'score', text: run.score + '%' };
+  if (run.score_total != null) return { cls: 'score', text: Math.round(run.score_total * 100) + '%' };
   return { cls: 'pending', text: '대기' };
 }
 
@@ -856,7 +852,6 @@ function getRunBadge(run) {
 // ════════════════════════════════════════════
 function onTaskClick(task) {
   state.selectedTaskId = task.id;
-  // load latest run
   const latestRun = task.runs && task.runs.length ? task.runs[task.runs.length - 1] : null;
   if (latestRun) {
     selectRun(task.id, latestRun.id, 1);
@@ -864,7 +859,7 @@ function onTaskClick(task) {
     state.selectedRunId = null;
     state.runData = null;
     renderTaskList();
-    showEmptyState();
+    showNoRunState(task);
   }
 }
 
@@ -902,6 +897,34 @@ async function selectRun(taskId, runId, phase) {
 function showEmptyState() {
   document.getElementById('empty-state').style.display = 'flex';
   document.getElementById('run-view').classList.add('hidden');
+}
+
+function showNoRunState(task) {
+  // Task는 선택됐지만 Run이 없을 때: top-bar를 보여주고 콘텐츠 영역에 안내 메시지 표시
+  document.getElementById('empty-state').style.display = 'none';
+  const rv = document.getElementById('run-view');
+  rv.classList.remove('hidden');
+  rv.style.display = 'flex';
+
+  const taskName = task ? task.name : '실험';
+  document.getElementById('top-bar-title').textContent = taskName;
+  document.getElementById('top-bar-meta').textContent = 'Run 없음';
+
+  // phase tabs 초기화
+  for (let i = 1; i <= 6; i++) setPhaseStatus(i, 'idle');
+
+  // 콘텐츠 영역에 안내 메시지
+  document.querySelectorAll('.phase-panel').forEach(p => p.classList.remove('active'));
+  const panel = document.getElementById('panel-1');
+  if (panel) {
+    panel.classList.add('active');
+    panel.innerHTML = `
+      <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:300px;gap:16px;color:#888;">
+        <div style="font-size:40px;opacity:0.4;">🚀</div>
+        <p style="font-size:14px;">아직 Run이 없습니다.</p>
+        <p style="font-size:13px;color:#aaa;">상단의 <strong>제로베이스 새 Run</strong> 버튼으로 첫 번째 실험을 시작하세요.</p>
+      </div>`;
+  }
 }
 
 function showRunView(phase) {
@@ -1457,6 +1480,9 @@ function handlePhaseResult(num, data) {
       if (data.design_summary) document.getElementById('p2-design-summary').textContent = data.design_summary;
       if (data.spec_summary) document.getElementById('p3-spec-summary').textContent = data.spec_summary;
       break;
+    case 3:
+      // Phase 3 완료 - Dify 실행 결과는 로그로 표시됨
+      break;
     case 4:
       if (data.scores) updateP4Scores(data.scores);
       break;
@@ -1549,7 +1575,7 @@ document.getElementById('nt-submit').addEventListener('click', async () => {
     const task = await apiFetch('/api/tasks', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, description: desc, summary_type: type })
+      body: JSON.stringify({ name, description: desc, generation_task: type })
     });
     state.tasks.push(task);
     renderTaskList();
@@ -1604,8 +1630,8 @@ document.getElementById('nr-submit').addEventListener('click', async () => {
   document.getElementById('nr-submit').disabled = true;
   try {
     const body = {
-      mode: _newRunMode,
-      based_on_run_id: _newRunMode === 'continue' ? state.selectedRunId : null
+      start_mode: _newRunMode,
+      base_run_id: _newRunMode === 'continue' ? state.selectedRunId : null
     };
     const newRun = await apiFetch(`/api/tasks/${state.selectedTaskId}/runs`, {
       method: 'POST',
