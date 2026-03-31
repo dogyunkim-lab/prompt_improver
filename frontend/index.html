@@ -878,8 +878,7 @@ async function deleteTask(task) {
     state.tasks = state.tasks.filter(t => t.id !== task.id);
     renderTaskList();
     if (state.selectedTaskId == null) {
-      document.getElementById('main-content').innerHTML =
-        '<div style="padding:40px;color:#6c7086;text-align:center;">Task를 선택하거나 새로 만드세요.</div>';
+      showEmptyState();
     }
   } catch (e) {
     alert('삭제 오류: ' + e.message);
