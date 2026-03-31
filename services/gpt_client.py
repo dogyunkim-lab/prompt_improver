@@ -1,38 +1,27 @@
-import httpx
-import json
 import logging
+from openai import AsyncOpenAI
 from config import GPT_API_BASE, GPT_API_KEY, GPT_MODEL
 
 logger = logging.getLogger(__name__)
 
+# api_key가 비어있으면 openai 클라이언트가 오류를 내므로 기본값 설정
+_client = AsyncOpenAI(
+    base_url=GPT_API_BASE,
+    api_key=GPT_API_KEY if GPT_API_KEY else "none",
+)
+
 
 async def call_gpt(messages: list, reasoning: str = "high", timeout: float = 180.0) -> str:
-    url = f"{GPT_API_BASE}/chat/completions"
-    headers = {
-        "Authorization": f"Bearer {GPT_API_KEY}",
-        "Content-Type": "application/json"
-    }
-    payload = {
-        "model": GPT_MODEL,
-        "messages": messages,
-        "reasoning_effort": reasoning,
-    }
-    logger.info(f"[GPT] POST {url}  model={GPT_MODEL}  reasoning={reasoning}")
+    logger.info(f"[GPT] POST {GPT_API_BASE}/chat/completions  model={GPT_MODEL}  reasoning={reasoning}")
     try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            response = await client.post(url, headers=headers, json=payload)
-            response.raise_for_status()
-            data = response.json()
-            return data["choices"][0]["message"]["content"]
-    except httpx.ConnectError as e:
-        msg = f"GPT 연결 실패 — URL: {url}  오류: {e}"
-        logger.error(msg)
-        raise RuntimeError(msg) from e
-    except httpx.HTTPStatusError as e:
-        msg = f"GPT HTTP 오류 {e.response.status_code} — URL: {url}  응답: {e.response.text[:200]}"
-        logger.error(msg)
-        raise RuntimeError(msg) from e
+        response = await _client.chat.completions.create(
+            model=GPT_MODEL,
+            messages=messages,
+            extra_body={"reasoning_effort": reasoning},
+            timeout=timeout,
+        )
+        return response.choices[0].message.content
     except Exception as e:
-        msg = f"GPT 호출 오류 — URL: {url}  {type(e).__name__}: {e}"
+        msg = f"GPT 호출 오류 — {GPT_API_BASE}  {type(e).__name__}: {e}"
         logger.error(msg)
-        raise
+        raise RuntimeError(msg) from e

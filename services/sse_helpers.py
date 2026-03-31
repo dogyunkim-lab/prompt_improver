@@ -26,3 +26,7 @@ def result_event(data: dict) -> str:
 
 def done_event(status: str) -> str:
     return sse_event({"type": "done", "status": status})
+
+
+def case_event(data: dict) -> str:
+    return sse_event({"type": "case", "data": data})

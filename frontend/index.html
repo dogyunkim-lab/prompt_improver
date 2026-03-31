@@ -117,6 +117,12 @@ h1, h2, h3, h4 { font-weight: 600; }
 #top-bar-left h3 { font-size: 16px; color: #1e1e2e; }
 #top-bar-left p { font-size: 12px; color: #888; margin-top: 2px; }
 #top-bar-right { display: flex; gap: 8px; }
+.btn-cancel {
+  padding: 8px 14px; background: #f38ba8; color: #1e1e2e; border-radius: 6px;
+  font-weight: 600; font-size: 12px; transition: opacity 0.15s;
+}
+.btn-cancel:hover { opacity: 0.85; }
+.btn-cancel:disabled { opacity: 0.5; cursor: not-allowed; }
 .btn-primary {
   padding: 8px 16px; background: #cba6f7; color: #1e1e2e; border-radius: 6px;
   font-weight: 600; font-size: 13px; transition: opacity 0.15s;
@@ -317,6 +323,17 @@ h1, h2, h3, h4 { font-weight: 600; }
 }
 .text-area-input:focus { border-color: #cba6f7; }
 
+/* ── 테이블 정렬/필터 ── */
+.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
+.sortable:hover { color: #89b4fa; }
+.sort-icon { font-size: 10px; color: #6c7086; margin-left: 3px; }
+.filter-row td { padding: 3px 4px; background: #f9f9f7; }
+.col-filter {
+  width: 100%; padding: 3px 6px; border: 1px solid #ddd; border-radius: 4px;
+  background: #fff; color: #333; font-size: 11px;
+}
+.col-filter:focus { border-color: #cba6f7; outline: none; }
+
 /* ── Section card ── */
 .section-card {
   background: #fff; border-radius: 10px; padding: 16px 20px; margin-bottom: 20px;
@@ -498,12 +515,20 @@ h1, h2, h3, h4 { font-weight: 600; }
               <table class="data-table" id="p1-table">
                 <thead>
                   <tr>
-                    <th>ID</th>
-                    <th>Judge판정</th>
-                    <th>버킷</th>
+                    <th class="sortable" data-col="id">ID <span class="sort-icon">↕</span></th>
+                    <th class="sortable" data-col="judge">Judge판정 <span class="sort-icon">↕</span></th>
+                    <th class="sortable" data-col="bucket">버킷 <span class="sort-icon">↕</span></th>
                     <th>STT불확실표현</th>
                     <th>분석요약</th>
                     <th>Judge이견여부</th>
+                  </tr>
+                  <tr class="filter-row">
+                    <td><input class="col-filter" data-col="id" placeholder="필터..."></td>
+                    <td><input class="col-filter" data-col="judge" placeholder="필터..."></td>
+                    <td><input class="col-filter" data-col="bucket" placeholder="필터..."></td>
+                    <td><input class="col-filter" data-col="stt_uncertain" placeholder="필터..."></td>
+                    <td><input class="col-filter" data-col="summary" placeholder="필터..."></td>
+                    <td><input class="col-filter" data-col="judge_disagreement" placeholder="필터..."></td>
                   </tr>
                 </thead>
                 <tbody id="p1-table-body">
@@ -530,6 +555,7 @@ h1, h2, h3, h4 { font-weight: 600; }
 
           <div class="action-bar">
             <button class="btn-primary" id="btn-p1-run">Phase 1 실행</button>
+            <button class="btn-cancel hidden" id="btn-p1-cancel">■ 중단</button>
           </div>
         </div>
 
@@ -551,6 +577,7 @@ h1, h2, h3, h4 { font-weight: 600; }
 
           <div class="action-bar">
             <button class="btn-primary" id="btn-p2-run">Phase 2 실행</button>
+            <button class="btn-cancel hidden" id="btn-p2-cancel">■ 중단</button>
           </div>
         </div>
 
@@ -582,6 +609,7 @@ h1, h2, h3, h4 { font-weight: 600; }
 
           <div class="action-bar">
             <button class="btn-primary" id="btn-p3-execute" disabled>전체 케이스 실행</button>
+            <button class="btn-cancel hidden" id="btn-p3-cancel">■ 중단</button>
           </div>
         </div>
 
@@ -627,6 +655,7 @@ h1, h2, h3, h4 { font-weight: 600; }
 
           <div class="action-bar">
             <button class="btn-primary" id="btn-p4-run">Phase 4 실행</button>
+            <button class="btn-cancel hidden" id="btn-p4-cancel">■ 중단</button>
           </div>
         </div>
 
@@ -733,6 +762,7 @@ h1, h2, h3, h4 { font-weight: 600; }
 
           <div class="action-bar">
             <button class="btn-primary" id="btn-p6-run">Phase 6 실행</button>
+            <button class="btn-cancel hidden" id="btn-p6-cancel">■ 중단</button>
           </div>
         </div>
 
@@ -826,7 +856,11 @@ const state = {
   p5TrendChart: null,
   submitting: false,
   taskFilter: '',
-  expandedRunTaskIds: {}
+  expandedRunTaskIds: {},
+  // Phase 1 테이블 상태
+  p1Cases: [],
+  p1Sort: { col: null, dir: 1 },
+  p1Filter: { id: '', judge: '', bucket: '', stt_uncertain: '', summary: '', judge_disagreement: '' },
 };
 
 // ════════════════════════════════════════════
@@ -1254,6 +1288,127 @@ function renderP1Table(cases) {
   }).join('');
 }
 
+// ── Phase 1 리셋 / 스트리밍 / 정렬·필터 ────────────────────────────────────────
+
+function resetP1UI() {
+  // 스코어카드 초기화
+  ['p1-sc1','p1-sc2','p1-sc3','p1-sc4'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.textContent = '—';
+  });
+  // 차트 초기화
+  if (state.p1BucketChart) { state.p1BucketChart.destroy(); state.p1BucketChart = null; }
+  // 케이스 상태 초기화
+  state.p1Cases = [];
+  state.p1Sort = { col: null, dir: 1 };
+  state.p1Filter = { id: '', judge: '', bucket: '', stt_uncertain: '', summary: '', judge_disagreement: '' };
+  // 필터 입력값 초기화
+  document.querySelectorAll('#p1-table .col-filter').forEach(el => { el.value = ''; });
+  // 정렬 아이콘 초기화
+  document.querySelectorAll('#p1-table .sort-icon').forEach(el => { el.textContent = '↕'; });
+  // 테이블 초기화
+  document.getElementById('p1-table-body').innerHTML =
+    '<tr><td colspan="6" style="text-align:center;color:#aaa;padding:20px;">분석 중...</td></tr>';
+  // 프로그레스 바 초기화
+  const pw = document.getElementById('p1-progress-wrap');
+  if (pw) pw.classList.remove('hidden');
+  const pt = document.getElementById('p1-progress-text');
+  if (pt) pt.textContent = '준비 중...';
+  const pf = document.getElementById('p1-progress-fill');
+  if (pf) pf.style.width = '0%';
+}
+
+function appendP1Case(c) {
+  state.p1Cases.push(c);
+  // 활성 필터/정렬이 없으면 DOM에 직접 추가 (성능 최적화)
+  const hasFilter = Object.values(state.p1Filter).some(v => v);
+  const hasSort = state.p1Sort.col !== null;
+  if (!hasFilter && !hasSort) {
+    _appendP1RowDOM(c);
+  } else {
+    renderP1TableFromState();
+  }
+}
+
+function _appendP1RowDOM(c) {
+  const tbody = document.getElementById('p1-table-body');
+  // "분석 중..." / "데이터 없음" placeholder 제거
+  if (tbody.querySelector('td[colspan]')) tbody.innerHTML = '';
+  const cls = c.judge === '오답' ? 'row-red' : c.judge === '과답' ? 'row-yellow' : '';
+  const tr = document.createElement('tr');
+  tr.className = cls;
+  tr.innerHTML = `<td>${esc(c.id||'')}</td><td>${esc(c.judge||'')}</td><td>${esc(c.bucket||'')}</td><td>${esc(c.stt_uncertain||'')}</td><td>${esc(c.summary||'')}</td><td>${esc(c.judge_disagreement||'')}</td>`;
+  tbody.appendChild(tr);
+}
+
+function renderP1TableFromState() {
+  let cases = [...state.p1Cases];
+  const f = state.p1Filter;
+  cases = cases.filter(c =>
+    (!f.id               || String(c.id||'').toLowerCase().includes(f.id.toLowerCase())) &&
+    (!f.judge            || String(c.judge||'').toLowerCase().includes(f.judge.toLowerCase())) &&
+    (!f.bucket           || String(c.bucket||'').toLowerCase().includes(f.bucket.toLowerCase())) &&
+    (!f.stt_uncertain    || String(c.stt_uncertain||'').toLowerCase().includes(f.stt_uncertain.toLowerCase())) &&
+    (!f.summary          || String(c.summary||'').toLowerCase().includes(f.summary.toLowerCase())) &&
+    (!f.judge_disagreement || String(c.judge_disagreement||'').toLowerCase().includes(f.judge_disagreement.toLowerCase()))
+  );
+  const s = state.p1Sort;
+  if (s.col) {
+    cases.sort((a, b) => String(a[s.col]||'').localeCompare(String(b[s.col]||''), 'ko') * s.dir);
+  }
+  renderP1Table(cases);
+  _updateSortIcons();
+}
+
+function _updateSortIcons() {
+  document.querySelectorAll('#p1-table .sortable').forEach(th => {
+    const icon = th.querySelector('.sort-icon');
+    if (!icon) return;
+    icon.textContent = (state.p1Sort.col === th.dataset.col)
+      ? (state.p1Sort.dir === 1 ? ' ↑' : ' ↓')
+      : ' ↕';
+  });
+}
+
+// 정렬 헤더 클릭
+document.querySelectorAll('#p1-table .sortable').forEach(th => {
+  th.addEventListener('click', () => {
+    const col = th.dataset.col;
+    if (state.p1Sort.col === col) {
+      state.p1Sort.dir *= -1;
+    } else {
+      state.p1Sort.col = col;
+      state.p1Sort.dir = 1;
+    }
+    renderP1TableFromState();
+  });
+});
+
+// 필터 입력
+document.querySelectorAll('#p1-table .col-filter').forEach(input => {
+  input.addEventListener('input', () => {
+    state.p1Filter[input.dataset.col] = input.value;
+    renderP1TableFromState();
+  });
+});
+
+// 중단 버튼 핸들러
+async function cancelPhase(num) {
+  const cancelBtn = document.getElementById(`btn-p${num}-cancel`);
+  if (cancelBtn) cancelBtn.disabled = true;
+  try {
+    await apiFetch(`/api/runs/${state.selectedRunId}/phase/${num}/cancel`, { method: 'POST' });
+  } catch (e) {
+    appendLog(`p${num}-log`, 'error', '중단 요청 실패: ' + e.message);
+    if (cancelBtn) cancelBtn.disabled = false;
+  }
+}
+
+[1, 2, 3, 4, 6].forEach(num => {
+  const cancelBtn = document.getElementById(`btn-p${num}-cancel`);
+  if (cancelBtn) cancelBtn.addEventListener('click', () => cancelPhase(num));
+});
+
 // File upload Phase 1
 document.getElementById('p1-file-input').addEventListener('change', function() {
   if (this.files[0]) {
@@ -1553,9 +1708,10 @@ function renderTags(containerId, tags, color) {
 async function runPhase(num) {
   if (!state.selectedRunId) return;
   state.submitting = true;
-  const btnId = `btn-p${num}-run`;
-  const btn = document.getElementById(btnId);
-  if (btn) btn.disabled = true;
+  const btn = document.getElementById(`btn-p${num}-run`);
+  const cancelBtn = document.getElementById(`btn-p${num}-cancel`);
+  if (btn) { btn.disabled = true; btn.classList.add('hidden'); }
+  if (cancelBtn) cancelBtn.classList.remove('hidden');
 
   setPhaseStatus(num, 'running');
   clearLog(`p${num}-log`);
@@ -1567,14 +1723,9 @@ async function runPhase(num) {
     if (_runningRun) { _runningRun.status = `phase${num}_running`; renderTaskList(); }
   }
 
-  // Phase 1: 프로그레스 바 초기화
+  // Phase 1: UI 전체 리셋
   if (num === 1) {
-    const pw = document.getElementById('p1-progress-wrap');
-    if (pw) pw.classList.remove('hidden');
-    const pt = document.getElementById('p1-progress-text');
-    if (pt) pt.textContent = '준비 중...';
-    const pf = document.getElementById('p1-progress-fill');
-    if (pf) pf.style.width = '0%';
+    resetP1UI();
   }
 
   try {
@@ -1590,7 +1741,8 @@ async function runPhase(num) {
     appendLog(`p${num}-log`, 'error', e.message);
     setPhaseStatus(num, 'failed');
     state.submitting = false;
-    if (btn) btn.disabled = false;
+    if (btn) { btn.disabled = false; btn.classList.remove('hidden'); }
+    if (cancelBtn) cancelBtn.classList.add('hidden');
   }
 }
 
@@ -1643,6 +1795,9 @@ function handleSSEMessage(num, msg) {
       }
       break;
     }
+    case 'case':
+      if (num === 1) appendP1Case(msg.data);
+      break;
     case 'result':
       handlePhaseResult(num, msg.data);
       break;
@@ -1683,14 +1838,23 @@ function handlePhaseResult(num, data) {
 
 async function onPhaseSSEDone(num, status) {
   const isDone = status === 'completed';
+  const isCancelled = status === 'cancelled';
   setPhaseStatus(num, isDone ? 'done' : 'failed');
-  appendLog(`p${num}-log`, isDone ? 'ok' : 'error', isDone ? '완료' : '실패');
+
+  const logLevel = isDone ? 'ok' : isCancelled ? 'warn' : 'error';
+  const logMsg   = isDone ? '완료' : isCancelled ? '중단됨' : '실패';
+  appendLog(`p${num}-log`, logLevel, logMsg);
 
   if (state.sseConnections[num]) {
     state.sseConnections[num].close();
     delete state.sseConnections[num];
   }
   state.submitting = false;
+
+  // 중단 버튼 숨기기
+  const cancelBtn = document.getElementById(`btn-p${num}-cancel`);
+  if (cancelBtn) cancelBtn.classList.add('hidden');
+
   const btn = document.getElementById(`btn-p${num}-run`);
   if (btn) btn.disabled = false;
 
@@ -1707,7 +1871,7 @@ async function onPhaseSSEDone(num, status) {
     }
   }
 
-  // Hide run button after success; show '재시도' on failure
+  // 성공: 실행 버튼 숨김 / 실패·중단: '재시도' 버튼 표시
   if (isDone && btn) {
     btn.classList.add('hidden');
   } else if (!isDone && btn) {
@@ -1723,7 +1887,6 @@ async function onPhaseSSEDone(num, status) {
     const fresh = await apiFetch(`/api/runs/${state.selectedRunId}`);
     state.runData = fresh;
     updateTopBar();
-    // Update sidebar badge
     const freshTasks = await apiFetch('/api/tasks');
     state.tasks = Array.isArray(freshTasks) ? freshTasks : state.tasks;
     renderTaskList();

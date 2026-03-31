@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import AsyncGenerator
 from database import get_db
 from services.gpt_client import call_gpt
-from services.sse_helpers import log_event, progress_event, result_event, done_event
+from services.sse_helpers import log_event, progress_event, result_event, done_event, case_event
 
 PROMPT_PATH = "prompts/phase1_analysis.txt"
 BATCH_SIZE = 5
@@ -112,6 +112,18 @@ async def run_phase1(run_id: int) -> AsyncGenerator[str, None]:
         await db.execute("UPDATE runs SET total_cases=? WHERE id=?", (total_cases, run_id))
         await db.commit()
 
+        # 정답 케이스 즉시 스트리밍 (GPT 분석 불필요)
+        for case in judge_data:
+            if case.get(eval_field) not in ("오답", "과답"):
+                yield case_event({
+                    "id": str(case.get("id", "")),
+                    "judge": case.get(eval_field, ""),
+                    "bucket": "",
+                    "stt_uncertain": "",
+                    "summary": case.get("generated", ""),
+                    "judge_disagreement": case.get("reason", ""),
+                })
+
         if error_count == 0:
             yield log_event("ok", "오답/과답 케이스가 없습니다. Phase 1 완료.")
             yield done_event("completed")
@@ -150,6 +162,14 @@ async def run_phase1(run_id: int) -> AsyncGenerator[str, None]:
                     )
                     await db.commit()
                     yield log_event("ok", f"케이스 {case.get('id', '?')} → {result.get('bucket', 'unknown')}")
+                    yield case_event({
+                        "id": str(case.get("id", "")),
+                        "judge": case.get(eval_field, ""),
+                        "bucket": result.get("bucket", ""),
+                        "stt_uncertain": "",
+                        "summary": case.get("generated", ""),
+                        "judge_disagreement": case.get("reason", ""),
+                    })
                 except Exception as e:
                     yield log_event("warn", f"케이스 {case.get('id', '?')} 분석 실패: {e}")
                     batch_results.append({"case_id": str(case.get("id", "")), "bucket": "prompt_missing"})
@@ -174,20 +194,6 @@ async def run_phase1(run_id: int) -> AsyncGenerator[str, None]:
             "wrong": round(wrong_count / total_cases * 100, 1) if total_cases else 0,
             "total": total_cases,
         }
-
-        # bucket_id → bucket 레이블 조회용 맵
-        bucket_map = {str(a.get("case_id", "")): a.get("bucket", "") for a in case_analyses}
-        summary["cases"] = [
-            {
-                "id": str(c.get("id", "")),
-                "judge": c.get(eval_field, ""),
-                "bucket": bucket_map.get(str(c.get("id", "")), ""),
-                "stt_uncertain": "",
-                "summary": c.get("generated", ""),
-                "judge_disagreement": c.get("reason", ""),
-            }
-            for c in judge_data[:100]
-        ]
 
         bucket_counts = summary.get("bucket_counts", {})
         summary["bucket_chart"] = {

@@ -8,18 +8,20 @@ from pydantic import BaseModel
 from typing import Optional
 from database import get_db
 from services.phase1_analysis import run_phase1
-
-logger = logging.getLogger(__name__)
 from services.phase2_design import run_phase2
 from services.phase3_dify import run_phase3, verify_dify_connection  # noqa
 from services.phase4_judge import run_phase4
 from services.phase6_strategy import run_phase6
 from services.delta import aggregate_scores
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(tags=["phases"])
 
 # 각 run_id별 스트림 큐 저장
 _stream_queues: dict[int, dict[int, asyncio.Queue]] = {}
+# 실행 중인 백그라운드 태스크 (run_id, phase) → Task
+_running_tasks: dict[tuple, asyncio.Task] = {}
 
 
 def get_queue(run_id: int, phase: int) -> asyncio.Queue:
@@ -31,15 +33,48 @@ def get_queue(run_id: int, phase: int) -> asyncio.Queue:
 
 
 async def _run_and_queue(generator, run_id: int, phase: int):
+    from services.sse_helpers import log_event as _le, done_event as _de
     q = get_queue(run_id, phase)
     try:
         async for event in generator:
             await q.put(event)
+    except asyncio.CancelledError:
+        await q.put(_le("warn", "사용자가 Phase를 중단했습니다."))
+        await q.put(_de("cancelled"))
+        try:
+            db = await get_db()
+            await db.execute(
+                "UPDATE phase_results SET status='cancelled', completed_at=? WHERE run_id=? AND phase=?",
+                (datetime.utcnow().isoformat(), run_id, phase)
+            )
+            await db.execute("UPDATE runs SET status='failed' WHERE id=?", (run_id,))
+            await db.commit()
+            await db.close()
+        except Exception:
+            pass
     except Exception as e:
         logger.exception(f"[Phase {phase} / run {run_id}] 백그라운드 태스크 예외: {e}")
-        raise
     finally:
-        await q.put(None)  # sentinel
+        await q.put(None)
+        _running_tasks.pop((run_id, phase), None)
+
+
+def _create_phase_task(generator, run_id: int, phase: int) -> asyncio.Task:
+    task = asyncio.create_task(_run_and_queue(generator, run_id, phase))
+    _running_tasks[(run_id, phase)] = task
+    return task
+
+
+# ── 중단 엔드포인트 ────────────────────────────────────────────────────────────
+
+@router.post("/api/runs/{run_id}/phase/{phase}/cancel")
+async def cancel_phase(run_id: int, phase: int):
+    key = (run_id, phase)
+    task = _running_tasks.get(key)
+    if task and not task.done():
+        task.cancel()
+        return {"ok": True}
+    return {"ok": False, "detail": "실행 중인 Phase가 없습니다"}
 
 
 # ── Phase 1 ──────────────────────────────────────────────────────────────────
@@ -53,8 +88,8 @@ async def trigger_phase1(run_id: int):
                 raise HTTPException(status_code=404, detail="Run not found")
     finally:
         await db.close()
-    q = get_queue(run_id, 1)
-    asyncio.create_task(_run_and_queue(run_phase1(run_id), run_id, 1))
+    get_queue(run_id, 1)
+    _create_phase_task(run_phase1(run_id), run_id, 1)
     return {"ok": True}
 
 
@@ -88,7 +123,7 @@ async def trigger_phase2(run_id: int):
             raise HTTPException(status_code=400, detail="Phase 1이 완료되지 않았습니다.")
     finally:
         await db.close()
-    asyncio.create_task(_run_and_queue(run_phase2(run_id), run_id, 2))
+    _create_phase_task(run_phase2(run_id), run_id, 2)
     return {"ok": True}
 
 
@@ -155,7 +190,7 @@ async def execute_phase3(run_id: int):
                 raise HTTPException(status_code=400, detail="검증된 Dify 연결이 없습니다.")
     finally:
         await db.close()
-    asyncio.create_task(_run_and_queue(run_phase3(run_id), run_id, 3))
+    _create_phase_task(run_phase3(run_id), run_id, 3)
     return {"ok": True}
 
 
@@ -189,7 +224,7 @@ async def trigger_phase4(run_id: int):
             raise HTTPException(status_code=400, detail="Phase 3이 완료되지 않았습니다.")
     finally:
         await db.close()
-    asyncio.create_task(_run_and_queue(run_phase4(run_id), run_id, 4))
+    _create_phase_task(run_phase4(run_id), run_id, 4)
     return {"ok": True}
 
 
@@ -312,7 +347,7 @@ async def trigger_phase6(run_id: int):
             raise HTTPException(status_code=400, detail="Phase 4가 완료되지 않았습니다.")
     finally:
         await db.close()
-    asyncio.create_task(_run_and_queue(run_phase6(run_id), run_id, 6))
+    _create_phase_task(run_phase6(run_id), run_id, 6)
     return {"ok": True}
 
 
