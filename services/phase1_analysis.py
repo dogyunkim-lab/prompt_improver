@@ -43,6 +43,34 @@ async def run_phase1(run_id: int) -> AsyncGenerator[str, None]:
         with open(judge_file, "r", encoding="utf-8") as f:
             judge_data = json.load(f)
 
+        # JSON 구조 정규화: 최상위가 dict이면 내부 list를 자동 추출
+        if isinstance(judge_data, dict):
+            list_values = [(k, v) for k, v in judge_data.items() if isinstance(v, list)]
+            if list_values:
+                key, judge_data = max(list_values, key=lambda x: len(x[1]))
+                yield log_event("info", f"JSON 키 '{key}'에서 {len(judge_data)}개 케이스 추출")
+            else:
+                yield log_event("error", f"JSON 형식 오류: dict에 list가 없습니다. 키 목록: {list(judge_data.keys())}")
+                yield done_event("failed")
+                await _mark_phase_failed(run_id, 1)
+                return
+
+        if not isinstance(judge_data, list):
+            yield log_event("error", f"JSON 형식 오류: list 또는 dict가 필요합니다. 실제 타입: {type(judge_data).__name__}")
+            yield done_event("failed")
+            await _mark_phase_failed(run_id, 1)
+            return
+
+        # 각 요소가 dict인지 확인
+        judge_data = [c for c in judge_data if isinstance(c, dict)]
+        if not judge_data:
+            yield log_event("error", "JSON 파일에서 유효한 케이스(dict 형식)를 찾을 수 없습니다.")
+            yield done_event("failed")
+            await _mark_phase_failed(run_id, 1)
+            return
+
+        yield log_event("info", f"감지된 필드: {list(judge_data[0].keys())}")
+
         # 오답/과답 케이스 추출
         error_cases = [c for c in judge_data if c.get("evaluation") in ("오답", "과답")]
         total_cases = len(judge_data)
