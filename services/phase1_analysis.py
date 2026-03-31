@@ -15,6 +15,21 @@ def load_prompt() -> str:
         return f.read()
 
 
+def _detect_eval_field(cases: list) -> str:
+    """JSON 케이스에서 오답/정답/과답 값이 들어있는 필드명 자동 감지.
+    'evaluation', 'answer_evaluation' 등 다양한 필드명을 지원한다."""
+    eval_values = {"오답", "과답", "정답"}
+    for field in ("evaluation", "answer_evaluation", "judge_result", "judge", "result"):
+        if any(str(c.get(field, "")) in eval_values for c in cases[:20]):
+            return field
+    # fallback: 첫 케이스의 모든 필드 스캔
+    if cases:
+        for key, val in cases[0].items():
+            if str(val) in eval_values:
+                return key
+    return "evaluation"
+
+
 async def run_phase1(run_id: int) -> AsyncGenerator[str, None]:
     db = await get_db()
     try:
@@ -71,8 +86,12 @@ async def run_phase1(run_id: int) -> AsyncGenerator[str, None]:
 
         yield log_event("info", f"감지된 필드: {list(judge_data[0].keys())}")
 
+        # 판정 결과 필드명 자동 감지 (evaluation, answer_evaluation 등)
+        eval_field = _detect_eval_field(judge_data)
+        yield log_event("info", f"판정 필드: '{eval_field}'")
+
         # 오답/과답 케이스 추출
-        error_cases = [c for c in judge_data if c.get("evaluation") in ("오답", "과답")]
+        error_cases = [c for c in judge_data if c.get(eval_field) in ("오답", "과답")]
         total_cases = len(judge_data)
         error_count = len(error_cases)
 
@@ -86,7 +105,7 @@ async def run_phase1(run_id: int) -> AsyncGenerator[str, None]:
                    VALUES (?,?,?,?,?,?,?,?,?)""",
                 (run_id, str(case.get("id", "")), case.get("generation_task", ""),
                  case.get("stt", ""), case.get("reference", ""), case.get("keywords", ""),
-                 case.get("generated", ""), case.get("evaluation", ""), case.get("reason", ""))
+                 case.get("generated", ""), case.get(eval_field, ""), case.get("reason", ""))
             )
         await db.commit()
 
@@ -113,7 +132,7 @@ async def run_phase1(run_id: int) -> AsyncGenerator[str, None]:
                     reference=case.get("reference", ""),
                     keywords=case.get("keywords", ""),
                     generated=case.get("generated", ""),
-                    judge_evaluation=case.get("evaluation", ""),
+                    judge_evaluation=case.get(eval_field, ""),
                     judge_reason=case.get("reason", ""),
                     case_id=case.get("id", "")
                 )
@@ -145,9 +164,9 @@ async def run_phase1(run_id: int) -> AsyncGenerator[str, None]:
         yield log_event("ok", f"분석 완료 — 주요 이슈: {', '.join(summary.get('top_issues', []))}")
 
         # BUG-10: baseline scores, cases, bucket_chart를 output_data에 포함
-        correct_count = sum(1 for c in judge_data if c.get("evaluation") == "정답")
-        over_count = sum(1 for c in judge_data if c.get("evaluation") == "과답")
-        wrong_count = sum(1 for c in judge_data if c.get("evaluation") == "오답")
+        correct_count = sum(1 for c in judge_data if c.get(eval_field) == "정답")
+        over_count = sum(1 for c in judge_data if c.get(eval_field) == "과답")
+        wrong_count = sum(1 for c in judge_data if c.get(eval_field) == "오답")
         summary["scores"] = {
             "correct_plus_over": round((correct_count + over_count) / total_cases * 100, 1) if total_cases else 0,
             "correct": round(correct_count / total_cases * 100, 1) if total_cases else 0,
@@ -161,7 +180,7 @@ async def run_phase1(run_id: int) -> AsyncGenerator[str, None]:
         summary["cases"] = [
             {
                 "id": str(c.get("id", "")),
-                "judge": c.get("evaluation", ""),
+                "judge": c.get(eval_field, ""),
                 "bucket": bucket_map.get(str(c.get("id", "")), ""),
                 "stt_uncertain": "",
                 "summary": c.get("generated", ""),

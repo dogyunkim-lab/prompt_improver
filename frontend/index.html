@@ -1272,19 +1272,21 @@ document.getElementById('btn-upload-judge').addEventListener('click', async () =
   state.submitting = true;
   document.getElementById('btn-upload-judge').disabled = true;
   document.getElementById('p1-upload-status').textContent = '업로드 중...';
+  let uploadOk = false;
   try {
     const fd = new FormData();
     fd.append('file', file);
-    const result = await apiFetch(`/api/runs/${state.selectedRunId}/upload-judge`, { method: 'POST', body: fd });
-    document.getElementById('p1-upload-status').textContent = '업로드 완료!';
-    if (result && result.scores) updateP1Scores(result.scores);
-    if (result && result.cases) renderP1Table(result.cases);
-    if (result && result.bucket_chart) updateP1BucketChart(result.bucket_chart);
+    await apiFetch(`/api/runs/${state.selectedRunId}/upload-judge`, { method: 'POST', body: fd });
+    document.getElementById('p1-upload-status').textContent = '업로드 완료! Phase 1 실행 중...';
+    uploadOk = true;
   } catch (e) {
     document.getElementById('p1-upload-status').textContent = '오류: ' + e.message;
   } finally {
     state.submitting = false;
     document.getElementById('btn-upload-judge').disabled = false;
+  }
+  if (uploadOk) {
+    runPhase(1);
   }
 });
 
