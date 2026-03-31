@@ -1,0 +1,1702 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Prompt Improver</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+/* ── Reset & Base ── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: 'Segoe UI', system-ui, sans-serif; font-size: 14px; background: #f5f5f0; color: #333; height: 100vh; overflow: hidden; }
+button { cursor: pointer; border: none; outline: none; font-family: inherit; font-size: 13px; }
+input, textarea, select { font-family: inherit; font-size: 13px; outline: none; }
+h1, h2, h3, h4 { font-weight: 600; }
+
+/* ── App Layout ── */
+#app { display: flex; height: 100vh; overflow: hidden; }
+
+/* ── Sidebar ── */
+#sidebar {
+  width: 220px; min-width: 220px; background: #1e1e2e; color: #cdd6f4;
+  display: flex; flex-direction: column; overflow: hidden;
+}
+#sidebar-header { padding: 18px 16px 12px; border-bottom: 1px solid #313244; }
+#sidebar-header h2 { font-size: 15px; color: #cba6f7; letter-spacing: 0.3px; }
+#sidebar-header p { font-size: 11px; color: #6c7086; margin-top: 3px; }
+#btn-new-task {
+  margin: 12px 12px 8px; padding: 8px 12px; background: #313244; color: #cba6f7;
+  border-radius: 6px; font-size: 12px; font-weight: 600; width: calc(100% - 24px);
+  border: 1px solid #45475a; transition: background 0.15s;
+}
+#btn-new-task:hover { background: #45475a; }
+#task-list { flex: 1; overflow-y: auto; padding-bottom: 12px; }
+#task-list::-webkit-scrollbar { width: 4px; }
+#task-list::-webkit-scrollbar-track { background: transparent; }
+#task-list::-webkit-scrollbar-thumb { background: #45475a; border-radius: 2px; }
+
+.task-item { }
+.task-row {
+  display: flex; align-items: center; gap: 8px; padding: 8px 14px;
+  cursor: pointer; transition: background 0.15s; user-select: none;
+}
+.task-row:hover { background: #26263a; }
+.task-row.active { background: #313244; }
+.task-dot { width: 8px; height: 8px; border-radius: 50%; background: #cba6f7; flex-shrink: 0; }
+.task-name { font-size: 13px; color: #cdd6f4; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.task-chevron { font-size: 10px; color: #6c7086; transition: transform 0.2s; }
+.task-chevron.open { transform: rotate(90deg); }
+
+.run-list { border-left: 2px solid #313244; margin-left: 22px; }
+.run-row {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 5px 10px 5px 12px; cursor: pointer; transition: background 0.15s;
+}
+.run-row:hover { background: #26263a; }
+.run-row.active { background: #313244; }
+.run-label { font-size: 12px; color: #a6adc8; }
+.run-badge {
+  font-size: 10px; font-weight: 700; padding: 2px 6px; border-radius: 10px;
+}
+.run-badge.score { background: #a6e3a1; color: #1e1e2e; }
+.run-badge.running { background: #f9e2af; color: #1e1e2e; }
+.run-badge.failed { background: #f38ba8; color: #1e1e2e; }
+.run-badge.pending { background: #45475a; color: #cdd6f4; }
+
+/* ── Main ── */
+#main { flex: 1; display: flex; flex-direction: column; overflow: hidden; background: #f5f5f0; }
+
+/* ── Top Bar ── */
+#top-bar {
+  background: #fff; border-bottom: 1px solid #e0ddd4; padding: 12px 24px;
+  display: flex; align-items: center; justify-content: space-between; flex-shrink: 0;
+}
+#top-bar-left h3 { font-size: 16px; color: #1e1e2e; }
+#top-bar-left p { font-size: 12px; color: #888; margin-top: 2px; }
+#top-bar-right { display: flex; gap: 8px; }
+.btn-primary {
+  padding: 8px 16px; background: #cba6f7; color: #1e1e2e; border-radius: 6px;
+  font-weight: 600; font-size: 13px; transition: opacity 0.15s;
+}
+.btn-primary:hover { opacity: 0.85; }
+.btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn-secondary {
+  padding: 8px 16px; background: transparent; color: #cba6f7; border-radius: 6px;
+  font-weight: 600; font-size: 13px; border: 1.5px solid #cba6f7; transition: background 0.15s;
+}
+.btn-secondary:hover { background: rgba(203,166,247,0.08); }
+.btn-secondary:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* ── Phase Tab Bar ── */
+#phase-tabs {
+  background: #fff; border-bottom: 1px solid #e0ddd4; padding: 0 24px;
+  display: flex; gap: 0; flex-shrink: 0;
+}
+.phase-tab {
+  display: flex; align-items: center; gap: 6px; padding: 10px 16px;
+  cursor: pointer; font-size: 13px; font-weight: 500; color: #888;
+  border-bottom: 2px solid transparent; transition: color 0.15s, border-color 0.15s;
+  user-select: none; white-space: nowrap;
+}
+.phase-tab:hover:not(.locked) { color: #cba6f7; }
+.phase-tab.active { color: #cba6f7; border-bottom-color: #cba6f7; }
+.phase-tab.locked { color: #bbb; cursor: not-allowed; }
+.phase-dot {
+  width: 8px; height: 8px; border-radius: 50%; background: #ccc; flex-shrink: 0;
+}
+.phase-dot.running {
+  background: #89b4fa;
+  animation: pulse 1s infinite;
+}
+.phase-dot.done { background: #a6e3a1; }
+.phase-dot.failed { background: #f38ba8; }
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+
+/* ── Content Area ── */
+#content-area { flex: 1; overflow-y: auto; padding: 20px 24px; }
+#content-area::-webkit-scrollbar { width: 6px; }
+#content-area::-webkit-scrollbar-track { background: transparent; }
+#content-area::-webkit-scrollbar-thumb { background: #ccc; border-radius: 3px; }
+
+.phase-panel { display: none; }
+.phase-panel.active { display: block; }
+
+/* ── Empty State ── */
+#empty-state {
+  flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  color: #aaa; gap: 12px;
+}
+#empty-state .empty-icon { font-size: 48px; opacity: 0.4; }
+#empty-state p { font-size: 14px; }
+
+/* ── Score Cards ── */
+.score-cards { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 20px; }
+.score-card {
+  background: #fff; border-radius: 10px; padding: 16px 20px; min-width: 140px;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.07); flex: 1;
+}
+.score-card .sc-label { font-size: 11px; color: #888; margin-bottom: 6px; }
+.score-card .sc-value { font-size: 28px; font-weight: 700; color: #1e1e2e; }
+.score-card .sc-sub { font-size: 11px; color: #aaa; margin-top: 2px; }
+.score-card.good .sc-value { color: #40a02b; }
+.score-card.warn .sc-value { color: #df8e1d; }
+.score-card.bad .sc-value { color: #d20f39; }
+
+/* ── Chart Container ── */
+.chart-container {
+  background: #fff; border-radius: 10px; padding: 16px 20px;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.07); margin-bottom: 20px;
+}
+.chart-container h4 { font-size: 13px; color: #555; margin-bottom: 12px; }
+.chart-wrap { position: relative; height: 180px; }
+
+/* ── Table ── */
+.table-section { background: #fff; border-radius: 10px; padding: 16px; margin-bottom: 20px; box-shadow: 0 1px 4px rgba(0,0,0,0.07); }
+.table-section h4 { font-size: 13px; color: #555; margin-bottom: 12px; }
+.data-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.data-table th {
+  background: #f8f7f3; text-align: left; padding: 7px 10px;
+  border-bottom: 1px solid #e8e4d9; color: #666; font-weight: 600;
+}
+.data-table td { padding: 7px 10px; border-bottom: 1px solid #f0ede4; color: #444; }
+.data-table tr:last-child td { border-bottom: none; }
+.data-table tr.row-red td { background: rgba(243,139,168,0.1); }
+.data-table tr.row-yellow td { background: rgba(249,226,175,0.2); }
+
+/* ── Log Box ── */
+.log-section { margin-bottom: 20px; }
+.log-section h4 { font-size: 13px; color: #555; margin-bottom: 8px; }
+.log-box {
+  background: #f8f7f3; border: 1px solid #e8e4d9; border-radius: 8px;
+  font-family: 'Courier New', monospace; font-size: 12px;
+  max-height: 300px; overflow-y: auto; padding: 10px 14px;
+}
+.log-box::-webkit-scrollbar { width: 4px; }
+.log-box::-webkit-scrollbar-thumb { background: #ccc; border-radius: 2px; }
+.log-entry { padding: 1px 0; line-height: 1.6; }
+.log-entry .ts { color: #aaa; margin-right: 6px; }
+.log-entry.info .msg { color: #1e88e5; }
+.log-entry.ok .msg { color: #40a02b; }
+.log-entry.warn .msg { color: #e07b00; }
+.log-entry.error .msg { color: #d20f39; }
+
+/* ── Progress Bar ── */
+.progress-wrap { margin-bottom: 16px; }
+.progress-label { font-size: 12px; color: #666; margin-bottom: 4px; display: flex; justify-content: space-between; }
+.progress-bar-bg { background: #e8e4d9; border-radius: 20px; height: 8px; overflow: hidden; }
+.progress-bar-fill { height: 100%; background: #cba6f7; border-radius: 20px; transition: width 0.3s; }
+
+/* ── Phase 2 Cards ── */
+.candidate-cards { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 20px; }
+.candidate-card {
+  background: #fff; border-radius: 10px; padding: 16px; flex: 1; min-width: 200px;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.07); border: 2px solid transparent;
+}
+.candidate-card.final { border-color: #cba6f7; }
+.candidate-card .cc-label { font-size: 12px; font-weight: 700; color: #cba6f7; margin-bottom: 8px; }
+.candidate-card .cc-nodes { font-size: 11px; color: #888; margin-bottom: 8px; }
+.candidate-card .cc-rationale { font-size: 12px; color: #555; margin-bottom: 12px; line-height: 1.5; }
+.node-prompt-tabs { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 8px; }
+.npt-tab {
+  padding: 3px 8px; border-radius: 4px; font-size: 11px; cursor: pointer;
+  background: #f0ede4; color: #666; border: 1px solid #e0ddd4;
+}
+.npt-tab.active { background: #cba6f7; color: #1e1e2e; border-color: #cba6f7; }
+.reasoning-badge {
+  display: inline-block; font-size: 10px; padding: 2px 6px; border-radius: 10px;
+  background: #89dceb; color: #1e1e2e; font-weight: 600; margin-left: 4px;
+}
+.design-summary {
+  background: #fff; border-radius: 10px; padding: 16px 20px; margin-bottom: 20px;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.07); font-size: 13px; color: #444; line-height: 1.7;
+}
+.design-summary h4 { font-size: 13px; color: #555; margin-bottom: 10px; }
+
+/* ── Phase 3 Dify Cards ── */
+.dify-cards { display: flex; flex-direction: column; gap: 12px; margin-bottom: 20px; }
+.dify-card {
+  background: #fff; border-radius: 10px; padding: 16px 20px;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.07);
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+}
+.dify-card .dc-label { font-weight: 700; color: #cba6f7; min-width: 60px; }
+.dify-input { flex: 1; min-width: 160px; padding: 7px 10px; border: 1px solid #e0ddd4; border-radius: 6px; background: #fafaf8; }
+.dify-input:focus { border-color: #cba6f7; }
+.dify-connect-btn {
+  padding: 7px 14px; background: #cba6f7; color: #1e1e2e; border-radius: 6px; font-weight: 600; font-size: 12px;
+}
+.dify-connect-btn:hover { opacity: 0.85; }
+.dify-status { font-size: 14px; font-weight: 700; min-width: 20px; }
+.dify-status.ok { color: #40a02b; }
+.dify-status.fail { color: #d20f39; }
+
+/* ── Phase 5 ── */
+.delta-cards { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 20px; }
+.delta-card {
+  background: #fff; border-radius: 10px; padding: 14px 18px; flex: 1;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.07); text-align: center;
+}
+.delta-card .dc-num { font-size: 26px; font-weight: 700; }
+.delta-card .dc-lbl { font-size: 11px; color: #888; margin-top: 4px; }
+.delta-card.improve .dc-num { color: #40a02b; }
+.delta-card.regress .dc-num { color: #d20f39; }
+.delta-card.same .dc-num { color: #888; }
+
+.goal-banner {
+  padding: 14px 20px; border-radius: 10px; font-size: 15px; font-weight: 700;
+  margin-bottom: 20px; text-align: center;
+}
+.goal-banner.achieved { background: #dcfce7; color: #166534; border: 1px solid #bbf7d0; }
+.goal-banner.not-yet { background: #fef9c3; color: #854d0e; border: 1px solid #fde68a; }
+
+/* ── Phase 6 ── */
+.learning-badge {
+  display: inline-block; padding: 4px 12px; border-radius: 20px;
+  background: #89b4fa; color: #1e1e2e; font-size: 12px; font-weight: 700; margin-bottom: 16px;
+}
+.tags-wrap { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 16px; }
+.tag-green {
+  padding: 3px 10px; border-radius: 12px; background: #dcfce7; color: #166534;
+  font-size: 12px; font-weight: 500;
+}
+.tag-red {
+  padding: 3px 10px; border-radius: 12px; background: #fee2e2; color: #991b1b;
+  font-size: 12px; font-weight: 500;
+}
+.text-box {
+  background: #fff; border: 1px solid #e0ddd4; border-radius: 8px; padding: 12px 16px;
+  font-size: 13px; color: #444; line-height: 1.7; margin-bottom: 16px;
+}
+.text-box h4 { font-size: 12px; color: #888; margin-bottom: 8px; }
+.text-area-input {
+  width: 100%; border: 1px solid #e0ddd4; border-radius: 8px; padding: 10px 14px;
+  background: #fafaf8; resize: vertical; min-height: 80px; font-size: 13px; color: #444;
+}
+.text-area-input:focus { border-color: #cba6f7; }
+
+/* ── Section card ── */
+.section-card {
+  background: #fff; border-radius: 10px; padding: 16px 20px; margin-bottom: 20px;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.07);
+}
+.section-card h4 { font-size: 13px; color: #555; margin-bottom: 12px; }
+
+/* ── Phase spec summary ── */
+.spec-summary {
+  background: #f8f7f3; border: 1px solid #e8e4d9; border-radius: 8px; padding: 12px 16px;
+  font-size: 12px; color: #555; line-height: 1.7; margin-bottom: 20px;
+}
+
+/* ── Action area ── */
+.action-bar { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; }
+
+/* ── Modal Overlay ── */
+.modal-overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.45); z-index: 1000;
+  display: none; align-items: center; justify-content: center;
+}
+.modal-overlay.open { display: flex; }
+.modal {
+  background: #fff; border-radius: 14px; padding: 28px 28px 24px;
+  width: 460px; max-width: 95vw; box-shadow: 0 8px 40px rgba(0,0,0,0.18);
+  position: relative; max-height: 90vh; overflow-y: auto;
+}
+.modal h3 { font-size: 16px; color: #1e1e2e; margin-bottom: 18px; }
+.form-group { margin-bottom: 14px; }
+.form-group label { display: block; font-size: 12px; color: #666; margin-bottom: 5px; font-weight: 600; }
+.form-input {
+  width: 100%; padding: 9px 12px; border: 1px solid #e0ddd4; border-radius: 7px;
+  background: #fafaf8; color: #333; transition: border-color 0.15s;
+}
+.form-input:focus { border-color: #cba6f7; }
+.form-select {
+  width: 100%; padding: 9px 12px; border: 1px solid #e0ddd4; border-radius: 7px;
+  background: #fafaf8; color: #333;
+}
+.radio-group { display: flex; flex-direction: column; gap: 8px; }
+.radio-item { display: flex; align-items: center; gap: 8px; font-size: 13px; color: #444; cursor: pointer; }
+.radio-item input { accent-color: #cba6f7; }
+.modal-footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
+.file-drop {
+  border: 2px dashed #e0ddd4; border-radius: 8px; padding: 20px; text-align: center;
+  cursor: pointer; transition: border-color 0.15s; color: #888; font-size: 13px;
+}
+.file-drop:hover, .file-drop.over { border-color: #cba6f7; background: rgba(203,166,247,0.05); }
+.file-drop input[type=file] { display: none; }
+.file-drop .file-name { margin-top: 6px; font-size: 12px; color: #cba6f7; font-weight: 600; }
+
+/* ── Utility ── */
+.hidden { display: none !important; }
+.mt8 { margin-top: 8px; }
+.mt16 { margin-top: 16px; }
+.mb0 { margin-bottom: 0 !important; }
+.flex-row { display: flex; align-items: center; gap: 8px; }
+.flex-1 { flex: 1; }
+.text-muted { color: #888; font-size: 12px; }
+.divider { height: 1px; background: #e8e4d9; margin: 16px 0; }
+</style>
+</head>
+<body>
+<div id="app">
+  <!-- ══════════ SIDEBAR ══════════ -->
+  <div id="sidebar">
+    <div id="sidebar-header">
+      <h2>Prompt Improver</h2>
+      <p>LLMOps 실험 관리 도구</p>
+    </div>
+    <button id="btn-new-task">+ 새 실험 만들기</button>
+    <div id="task-list"></div>
+  </div>
+
+  <!-- ══════════ MAIN ══════════ -->
+  <div id="main">
+    <!-- Empty state when no run selected -->
+    <div id="empty-state">
+      <div class="empty-icon">🧪</div>
+      <p>왼쪽에서 실험을 선택하거나 새 실험을 만들어보세요.</p>
+    </div>
+
+    <!-- Run view (hidden until run selected) -->
+    <div id="run-view" class="hidden" style="display:flex;flex-direction:column;height:100%;overflow:hidden;">
+      <!-- Top Bar -->
+      <div id="top-bar">
+        <div id="top-bar-left">
+          <h3 id="top-bar-title">실험명</h3>
+          <p id="top-bar-meta">Run 1 · 2024-01-01</p>
+        </div>
+        <div id="top-bar-right">
+          <button class="btn-secondary" id="btn-zero-run">제로베이스 새 Run</button>
+          <button class="btn-primary" id="btn-continue-run">이어서 새 Run</button>
+        </div>
+      </div>
+      <!-- Phase Tabs -->
+      <div id="phase-tabs">
+        <div class="phase-tab active" data-phase="1">
+          <span class="phase-dot" id="dot-1"></span>Phase 1
+        </div>
+        <div class="phase-tab locked" data-phase="2">
+          <span class="phase-dot" id="dot-2"></span>Phase 2
+        </div>
+        <div class="phase-tab locked" data-phase="3">
+          <span class="phase-dot" id="dot-3"></span>Phase 3
+        </div>
+        <div class="phase-tab locked" data-phase="4">
+          <span class="phase-dot" id="dot-4"></span>Phase 4
+        </div>
+        <div class="phase-tab locked" data-phase="5">
+          <span class="phase-dot" id="dot-5"></span>Phase 5
+        </div>
+        <div class="phase-tab locked" data-phase="6">
+          <span class="phase-dot" id="dot-6"></span>Phase 6
+        </div>
+      </div>
+      <!-- Content -->
+      <div id="content-area">
+
+        <!-- ──────── PHASE 1 ──────── -->
+        <div class="phase-panel active" id="panel-1">
+          <div id="p1-upload-section">
+            <div class="section-card mb0" style="margin-bottom:16px;">
+              <h4>Judge JSON 업로드</h4>
+              <div class="file-drop" id="p1-file-drop" onclick="document.getElementById('p1-file-input').click()">
+                <div>파일을 드래그하거나 클릭하여 업로드</div>
+                <div class="file-name" id="p1-file-name"></div>
+                <input type="file" id="p1-file-input" accept=".json" />
+              </div>
+              <div class="action-bar mt8">
+                <button class="btn-primary" id="btn-upload-judge" disabled>업로드</button>
+                <span class="text-muted" id="p1-upload-status"></span>
+              </div>
+            </div>
+          </div>
+
+          <div class="score-cards" id="p1-score-cards">
+            <div class="score-card good">
+              <div class="sc-label">정답+과답%</div>
+              <div class="sc-value" id="p1-sc1">—</div>
+              <div class="sc-sub">정답 + 과답</div>
+            </div>
+            <div class="score-card">
+              <div class="sc-label">정답%</div>
+              <div class="sc-value" id="p1-sc2">—</div>
+              <div class="sc-sub">정확한 답변</div>
+            </div>
+            <div class="score-card warn">
+              <div class="sc-label">과답%</div>
+              <div class="sc-value" id="p1-sc3">—</div>
+              <div class="sc-sub">과도한 답변</div>
+            </div>
+            <div class="score-card bad">
+              <div class="sc-label">오답%</div>
+              <div class="sc-value" id="p1-sc4">—</div>
+              <div class="sc-sub">틀린 답변</div>
+            </div>
+          </div>
+
+          <div class="chart-container">
+            <h4>버킷 분포 (판정 결과)</h4>
+            <div class="chart-wrap"><canvas id="p1-bucket-chart"></canvas></div>
+          </div>
+
+          <div class="table-section">
+            <h4>케이스 목록</h4>
+            <div style="overflow-x:auto;">
+              <table class="data-table" id="p1-table">
+                <thead>
+                  <tr>
+                    <th>ID</th>
+                    <th>Judge판정</th>
+                    <th>버킷</th>
+                    <th>STT불확실표현</th>
+                    <th>분석요약</th>
+                    <th>Judge이견여부</th>
+                  </tr>
+                </thead>
+                <tbody id="p1-table-body">
+                  <tr><td colspan="6" style="text-align:center;color:#aaa;padding:20px;">데이터 없음</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="log-section">
+            <h4>실행 로그</h4>
+            <div class="log-box" id="p1-log"></div>
+          </div>
+
+          <div class="action-bar">
+            <button class="btn-primary" id="btn-p1-run">Phase 1 실행</button>
+          </div>
+        </div>
+
+        <!-- ──────── PHASE 2 ──────── -->
+        <div class="phase-panel" id="panel-2">
+          <div class="candidate-cards" id="p2-candidate-cards">
+            <div class="text-muted">Phase 2 실행 후 결과가 표시됩니다.</div>
+          </div>
+
+          <div class="design-summary section-card">
+            <h4>디자인 요약</h4>
+            <div id="p2-design-summary" class="text-muted">Phase 2 실행 후 표시됩니다.</div>
+          </div>
+
+          <div class="log-section">
+            <h4>실행 로그</h4>
+            <div class="log-box" id="p2-log"></div>
+          </div>
+
+          <div class="action-bar">
+            <button class="btn-primary" id="btn-p2-run">Phase 2 실행</button>
+          </div>
+        </div>
+
+        <!-- ──────── PHASE 3 ──────── -->
+        <div class="phase-panel" id="panel-3">
+          <div class="spec-summary" id="p3-spec-summary">Phase 2 결과가 여기에 표시됩니다.</div>
+
+          <div class="section-card">
+            <h4>Dify 연결 설정</h4>
+            <div class="dify-cards" id="p3-dify-cards">
+              <div class="text-muted">Phase 2 완료 후 후보가 표시됩니다.</div>
+            </div>
+          </div>
+
+          <div class="progress-wrap" id="p3-progress-wrap">
+            <div class="progress-label">
+              <span>전체 케이스 실행 진행</span>
+              <span id="p3-progress-text">0 / 0</span>
+            </div>
+            <div class="progress-bar-bg">
+              <div class="progress-bar-fill" id="p3-progress-fill" style="width:0%"></div>
+            </div>
+          </div>
+
+          <div class="log-section">
+            <h4>실행 로그</h4>
+            <div class="log-box" id="p3-log"></div>
+          </div>
+
+          <div class="action-bar">
+            <button class="btn-primary" id="btn-p3-execute" disabled>전체 케이스 실행</button>
+          </div>
+        </div>
+
+        <!-- ──────── PHASE 4 ──────── -->
+        <div class="phase-panel" id="panel-4">
+          <div class="progress-wrap">
+            <div class="progress-label">
+              <span>평가 진행</span>
+              <span id="p4-progress-text">0 / 0</span>
+            </div>
+            <div class="progress-bar-bg">
+              <div class="progress-bar-fill" id="p4-progress-fill" style="width:0%"></div>
+            </div>
+          </div>
+
+          <div class="score-cards" id="p4-score-cards">
+            <div class="score-card good">
+              <div class="sc-label">정답+과답%</div>
+              <div class="sc-value" id="p4-sc1">—</div>
+              <div class="sc-sub">정답 + 과답</div>
+            </div>
+            <div class="score-card">
+              <div class="sc-label">정답%</div>
+              <div class="sc-value" id="p4-sc2">—</div>
+              <div class="sc-sub">정확한 답변</div>
+            </div>
+            <div class="score-card warn">
+              <div class="sc-label">과답%</div>
+              <div class="sc-value" id="p4-sc3">—</div>
+              <div class="sc-sub">과도한 답변</div>
+            </div>
+            <div class="score-card bad">
+              <div class="sc-label">오답%</div>
+              <div class="sc-value" id="p4-sc4">—</div>
+              <div class="sc-sub">틀린 답변</div>
+            </div>
+          </div>
+
+          <div class="log-section">
+            <h4>실행 로그</h4>
+            <div class="log-box" id="p4-log"></div>
+          </div>
+
+          <div class="action-bar">
+            <button class="btn-primary" id="btn-p4-run">Phase 4 실행</button>
+          </div>
+        </div>
+
+        <!-- ──────── PHASE 5 ──────── -->
+        <div class="phase-panel" id="panel-5">
+          <div class="score-cards">
+            <div class="score-card good">
+              <div class="sc-label">정답+과답%</div>
+              <div class="sc-value" id="p5-sc1">—</div>
+              <div class="sc-sub">이번 Run</div>
+            </div>
+            <div class="score-card">
+              <div class="sc-label">정답%</div>
+              <div class="sc-value" id="p5-sc2">—</div>
+              <div class="sc-sub">이번 Run</div>
+            </div>
+            <div class="score-card warn">
+              <div class="sc-label">과답%</div>
+              <div class="sc-value" id="p5-sc3">—</div>
+              <div class="sc-sub">이번 Run</div>
+            </div>
+            <div class="score-card bad">
+              <div class="sc-label">오답%</div>
+              <div class="sc-value" id="p5-sc4">—</div>
+              <div class="sc-sub">이번 Run</div>
+            </div>
+          </div>
+
+          <div id="p5-goal-banner" class="goal-banner not-yet hidden">목표까지 N%p 부족</div>
+
+          <div class="chart-container">
+            <h4>Run별 성능 추이 (정답+과답%)</h4>
+            <div class="chart-wrap"><canvas id="p5-trend-chart"></canvas></div>
+          </div>
+
+          <div class="delta-cards">
+            <div class="delta-card improve">
+              <div class="dc-num" id="p5-improve">—</div>
+              <div class="dc-lbl">개선</div>
+            </div>
+            <div class="delta-card regress">
+              <div class="dc-num" id="p5-regress">—</div>
+              <div class="dc-lbl">회귀</div>
+            </div>
+            <div class="delta-card same">
+              <div class="dc-num" id="p5-same">—</div>
+              <div class="dc-lbl">변화없음</div>
+            </div>
+          </div>
+
+          <div class="table-section">
+            <h4>회귀 케이스</h4>
+            <div style="overflow-x:auto;">
+              <table class="data-table" id="p5-regress-table">
+                <thead>
+                  <tr>
+                    <th>ID</th>
+                    <th>이전판정 → 현재판정</th>
+                    <th>Judge사유</th>
+                  </tr>
+                </thead>
+                <tbody id="p5-regress-tbody">
+                  <tr><td colspan="3" style="text-align:center;color:#aaa;padding:20px;">데이터 없음</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- ──────── PHASE 6 ──────── -->
+        <div class="phase-panel" id="panel-6">
+          <div>
+            <span class="learning-badge" id="p6-lr-badge">Learning Rate: —</span>
+          </div>
+
+          <div class="text-box mt8">
+            <h4>Backprop 분석</h4>
+            <div id="p6-backprop-text" class="text-muted">Phase 6 실행 후 표시됩니다.</div>
+          </div>
+
+          <div class="section-card">
+            <h4>효과적 요소 (녹색)</h4>
+            <div class="tags-wrap" id="p6-effective-tags">
+              <span class="text-muted">없음</span>
+            </div>
+          </div>
+
+          <div class="section-card">
+            <h4>해로운 요소 (적색)</h4>
+            <div class="tags-wrap" id="p6-harmful-tags">
+              <span class="text-muted">없음</span>
+            </div>
+          </div>
+
+          <div class="section-card">
+            <h4>다음 방향</h4>
+            <textarea class="text-area-input" id="p6-next-direction" placeholder="Phase 6 실행 후 채워집니다..."></textarea>
+          </div>
+
+          <div class="log-section">
+            <h4>실행 로그</h4>
+            <div class="log-box" id="p6-log"></div>
+          </div>
+
+          <div class="action-bar">
+            <button class="btn-primary" id="btn-p6-run">Phase 6 실행</button>
+          </div>
+        </div>
+
+      </div><!-- /content-area -->
+    </div><!-- /run-view -->
+  </div><!-- /main -->
+</div><!-- /app -->
+
+<!-- ══════════ MODAL: 새 실험 만들기 ══════════ -->
+<div class="modal-overlay" id="modal-new-task">
+  <div class="modal">
+    <h3>새 실험 만들기</h3>
+    <div class="form-group">
+      <label>Task명 *</label>
+      <input type="text" class="form-input" id="nt-name" placeholder="실험 이름 입력" />
+    </div>
+    <div class="form-group">
+      <label>설명</label>
+      <input type="text" class="form-input" id="nt-desc" placeholder="실험에 대한 설명" />
+    </div>
+    <div class="form-group">
+      <label>요약 유형</label>
+      <select class="form-select" id="nt-type">
+        <option value="abstractive">Abstractive</option>
+        <option value="extractive">Extractive</option>
+        <option value="hybrid">Hybrid</option>
+      </select>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-secondary" id="nt-cancel">취소</button>
+      <button class="btn-primary" id="nt-submit">만들기</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════ MODAL: 새 Run 시작 ══════════ -->
+<div class="modal-overlay" id="modal-new-run">
+  <div class="modal">
+    <h3>새 Run 시작</h3>
+    <div class="form-group">
+      <label>시작 방식</label>
+      <div class="radio-group" id="nr-radio-group">
+        <label class="radio-item">
+          <input type="radio" name="run-mode" value="zero" checked />
+          제로베이스로 시작
+        </label>
+        <label class="radio-item" id="nr-continue-option">
+          <input type="radio" name="run-mode" value="continue" />
+          <span id="nr-continue-label">이어서 시작 (Run N 기반)</span>
+        </label>
+      </div>
+    </div>
+    <div class="form-group">
+      <label>Judge JSON 업로드 (선택)</label>
+      <div class="file-drop" id="nr-file-drop" onclick="document.getElementById('nr-file-input').click()">
+        <div>파일을 드래그하거나 클릭하여 업로드</div>
+        <div class="file-name" id="nr-file-name"></div>
+        <input type="file" id="nr-file-input" accept=".json" />
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-secondary" id="nr-cancel">취소</button>
+      <button class="btn-primary" id="nr-submit">실험 시작</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ════════════════════════════════════════════
+// STATE
+// ════════════════════════════════════════════
+const state = {
+  tasks: [],
+  selectedTaskId: null,
+  selectedRunId: null,
+  currentPhase: 1,
+  runData: null,
+  sseConnections: {},   // phase -> EventSource
+  phaseStatus: {},      // phase -> 'idle'|'running'|'done'|'failed'
+  difyConnections: {},  // candidateId -> boolean
+  p1BucketChart: null,
+  p5TrendChart: null,
+  submitting: false
+};
+
+// ════════════════════════════════════════════
+// API HELPERS
+// ════════════════════════════════════════════
+async function apiFetch(url, options = {}) {
+  const res = await fetch(url, options);
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`HTTP ${res.status}: ${text}`);
+  }
+  const ct = res.headers.get('content-type') || '';
+  if (ct.includes('application/json')) return res.json();
+  return res.text();
+}
+
+// ════════════════════════════════════════════
+// INIT
+// ════════════════════════════════════════════
+document.addEventListener('DOMContentLoaded', async () => {
+  setupEventListeners();
+  await loadTasks();
+  restoreSelection();
+});
+
+async function loadTasks() {
+  try {
+    const tasks = await apiFetch('/api/tasks');
+    state.tasks = Array.isArray(tasks) ? tasks : [];
+  } catch (e) {
+    state.tasks = [];
+  }
+  renderTaskList();
+}
+
+function restoreSelection() {
+  const lastTaskId = localStorage.getItem('lastTaskId');
+  const lastRunId  = localStorage.getItem('lastRunId');
+  const lastPhase  = parseInt(localStorage.getItem('lastPhase') || '1', 10);
+  if (lastTaskId && lastRunId) {
+    selectRun(lastTaskId, lastRunId, lastPhase);
+  }
+}
+
+// ════════════════════════════════════════════
+// TASK LIST RENDER
+// ════════════════════════════════════════════
+function renderTaskList() {
+  const container = document.getElementById('task-list');
+  container.innerHTML = '';
+  if (!state.tasks.length) {
+    container.innerHTML = '<div style="padding:16px 14px;color:#6c7086;font-size:12px;">실험이 없습니다.</div>';
+    return;
+  }
+  state.tasks.forEach(task => {
+    const isActive = task.id == state.selectedTaskId;
+    const div = document.createElement('div');
+    div.className = 'task-item';
+
+    const row = document.createElement('div');
+    row.className = 'task-row' + (isActive ? ' active' : '');
+    row.innerHTML = `
+      <span class="task-dot"></span>
+      <span class="task-name" title="${esc(task.name)}">${esc(task.name)}</span>
+      <span class="task-chevron ${isActive ? 'open' : ''}">▶</span>
+    `;
+    row.addEventListener('click', () => onTaskClick(task));
+    div.appendChild(row);
+
+    // Run sub-list
+    if (isActive && task.runs && task.runs.length) {
+      const runList = document.createElement('div');
+      runList.className = 'run-list';
+      task.runs.forEach(run => {
+        const isRunActive = run.id == state.selectedRunId;
+        const rr = document.createElement('div');
+        rr.className = 'run-row' + (isRunActive ? ' active' : '');
+        const badge = getRunBadge(run);
+        rr.innerHTML = `
+          <span class="run-label">Run ${run.run_number} — ${run.mode === 'zero' ? '제로' : '계속'}</span>
+          <span class="run-badge ${badge.cls}">${badge.text}</span>
+        `;
+        rr.addEventListener('click', (e) => { e.stopPropagation(); onRunClick(task.id, run.id); });
+        runList.appendChild(rr);
+      });
+      div.appendChild(runList);
+    }
+
+    container.appendChild(div);
+  });
+}
+
+function getRunBadge(run) {
+  if (run.status === 'running') return { cls: 'running', text: '진행중' };
+  if (run.status === 'failed')  return { cls: 'failed',  text: '실패' };
+  if (run.score != null) return { cls: 'score', text: run.score + '%' };
+  return { cls: 'pending', text: '대기' };
+}
+
+// ════════════════════════════════════════════
+// SELECTION
+// ════════════════════════════════════════════
+function onTaskClick(task) {
+  state.selectedTaskId = task.id;
+  // load latest run
+  const latestRun = task.runs && task.runs.length ? task.runs[task.runs.length - 1] : null;
+  if (latestRun) {
+    selectRun(task.id, latestRun.id, 1);
+  } else {
+    state.selectedRunId = null;
+    state.runData = null;
+    renderTaskList();
+    showEmptyState();
+  }
+}
+
+function onRunClick(taskId, runId) {
+  selectRun(taskId, runId, state.currentPhase);
+}
+
+async function selectRun(taskId, runId, phase) {
+  state.selectedTaskId = taskId;
+  state.selectedRunId = runId;
+  localStorage.setItem('lastTaskId', taskId);
+  localStorage.setItem('lastRunId', runId);
+
+  try {
+    const runData = await apiFetch(`/api/runs/${runId}`);
+    state.runData = runData;
+  } catch (e) {
+    state.runData = { id: runId, run_number: '?', task_id: taskId, phases: {} };
+  }
+
+  // Expand task in sidebar
+  const task = state.tasks.find(t => t.id == taskId);
+  if (task && (!task.runs || !task.runs.some(r => r.id == runId))) {
+    // try to refetch
+    try {
+      const fresh = await apiFetch('/api/tasks');
+      state.tasks = Array.isArray(fresh) ? fresh : state.tasks;
+    } catch (_) {}
+  }
+
+  renderTaskList();
+  showRunView(phase);
+}
+
+function showEmptyState() {
+  document.getElementById('empty-state').style.display = 'flex';
+  document.getElementById('run-view').classList.add('hidden');
+}
+
+function showRunView(phase) {
+  document.getElementById('empty-state').style.display = 'none';
+  const rv = document.getElementById('run-view');
+  rv.classList.remove('hidden');
+  rv.style.display = 'flex';
+
+  updateTopBar();
+  updatePhaseTabsFromRunData();
+  switchPhase(phase, false);
+  populateRunData();
+}
+
+function updateTopBar() {
+  const rd = state.runData;
+  const task = state.tasks.find(t => t.id == (rd ? rd.task_id : state.selectedTaskId));
+  const taskName = task ? task.name : '실험';
+  const runNum = rd ? rd.run_number : '?';
+  const createdAt = rd && rd.created_at ? new Date(rd.created_at).toLocaleString('ko-KR') : '';
+  document.getElementById('top-bar-title').textContent = taskName;
+  document.getElementById('top-bar-meta').textContent = `Run ${runNum}${createdAt ? ' · ' + createdAt : ''}`;
+}
+
+function updatePhaseTabsFromRunData() {
+  if (!state.runData) return;
+  const phases = state.runData.phases || {};
+  for (let i = 1; i <= 6; i++) {
+    const ph = phases[i] || {};
+    const status = ph.status || 'idle';
+    setPhaseStatus(i, status);
+  }
+}
+
+// ════════════════════════════════════════════
+// PHASE SWITCHING
+// ════════════════════════════════════════════
+function switchPhase(num, saveLocal = true) {
+  state.currentPhase = num;
+  if (saveLocal) localStorage.setItem('lastPhase', num);
+
+  document.querySelectorAll('.phase-tab').forEach(t => {
+    t.classList.remove('active');
+    if (parseInt(t.dataset.phase) === num) t.classList.add('active');
+  });
+  document.querySelectorAll('.phase-panel').forEach(p => {
+    p.classList.remove('active');
+  });
+  const panel = document.getElementById(`panel-${num}`);
+  if (panel) panel.classList.add('active');
+
+  // Phase 5: auto fetch
+  if (num === 5) fetchPhase5Data();
+}
+
+function setPhaseStatus(num, status) {
+  state.phaseStatus[num] = status;
+  const dot = document.getElementById(`dot-${num}`);
+  const tab = document.querySelector(`.phase-tab[data-phase="${num}"]`);
+  if (!dot || !tab) return;
+
+  dot.className = 'phase-dot';
+  if (status === 'running') dot.classList.add('running');
+  else if (status === 'done' || status === 'completed') dot.classList.add('done');
+  else if (status === 'failed') dot.classList.add('failed');
+
+  if (num > 1) {
+    // Unlock if previous phase done (or this phase is done/running)
+    const prevDone = state.phaseStatus[num - 1] === 'done' || state.phaseStatus[num - 1] === 'completed';
+    if (prevDone || status === 'done' || status === 'completed' || status === 'running') {
+      tab.classList.remove('locked');
+    }
+  }
+}
+
+// ════════════════════════════════════════════
+// POPULATE RUN DATA INTO UI
+// ════════════════════════════════════════════
+function populateRunData() {
+  if (!state.runData) return;
+  const phases = state.runData.phases || {};
+
+  // Phase 1
+  const p1 = phases[1] || {};
+  if (p1.scores) updateP1Scores(p1.scores);
+  if (p1.cases) renderP1Table(p1.cases);
+  if (p1.bucket_chart) updateP1BucketChart(p1.bucket_chart);
+  if (p1.logs) replayLogs('p1-log', p1.logs);
+
+  // Phase 2
+  const p2 = phases[2] || {};
+  if (p2.candidates) renderP2Candidates(p2.candidates);
+  if (p2.design_summary) document.getElementById('p2-design-summary').textContent = p2.design_summary;
+  if (p2.logs) replayLogs('p2-log', p2.logs);
+
+  // Phase 3
+  const p3 = phases[3] || {};
+  if (p2.spec_summary) document.getElementById('p3-spec-summary').textContent = p2.spec_summary;
+  if (p2.candidates) renderP3DifyCards(p2.candidates);
+  if (p3.logs) replayLogs('p3-log', p3.logs);
+
+  // Phase 4
+  const p4 = phases[4] || {};
+  if (p4.scores) updateP4Scores(p4.scores);
+  if (p4.logs) replayLogs('p4-log', p4.logs);
+
+  // Phase 6
+  const p6 = phases[6] || {};
+  if (p6.learning_rate) document.getElementById('p6-lr-badge').textContent = 'Learning Rate: ' + p6.learning_rate;
+  if (p6.backprop) document.getElementById('p6-backprop-text').textContent = p6.backprop;
+  if (p6.effective) renderTags('p6-effective-tags', p6.effective, 'green');
+  if (p6.harmful) renderTags('p6-harmful-tags', p6.harmful, 'red');
+  if (p6.next_direction) document.getElementById('p6-next-direction').value = p6.next_direction;
+  if (p6.logs) replayLogs('p6-log', p6.logs);
+}
+
+// ════════════════════════════════════════════
+// PHASE 1
+// ════════════════════════════════════════════
+function updateP1Scores(scores) {
+  const { correct_plus_over, correct, over, wrong, total } = scores;
+  const fmt = v => v != null ? v + '%' : '—';
+  document.getElementById('p1-sc1').textContent = fmt(correct_plus_over);
+  document.getElementById('p1-sc2').textContent = fmt(correct);
+  document.getElementById('p1-sc3').textContent = fmt(over);
+  document.getElementById('p1-sc4').textContent = fmt(wrong);
+}
+
+function updateP1BucketChart(data) {
+  const ctx = document.getElementById('p1-bucket-chart').getContext('2d');
+  if (state.p1BucketChart) state.p1BucketChart.destroy();
+  state.p1BucketChart = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: data.labels || ['정답', '과답', '오답', '기타'],
+      datasets: [{
+        label: '케이스 수',
+        data: data.values || [0, 0, 0, 0],
+        backgroundColor: ['#a6e3a1', '#f9e2af', '#f38ba8', '#89b4fa'],
+        borderRadius: 6
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: { y: { beginAtZero: true, ticks: { precision: 0 } } }
+    }
+  });
+}
+
+function renderP1Table(cases) {
+  const tbody = document.getElementById('p1-table-body');
+  if (!cases || !cases.length) {
+    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#aaa;padding:20px;">데이터 없음</td></tr>';
+    return;
+  }
+  tbody.innerHTML = cases.map(c => {
+    const cls = c.judge === '오답' ? 'row-red' : c.judge === '과답' ? 'row-yellow' : '';
+    return `<tr class="${cls}">
+      <td>${esc(c.id || '')}</td>
+      <td>${esc(c.judge || '')}</td>
+      <td>${esc(c.bucket || '')}</td>
+      <td>${esc(c.stt_uncertain || '')}</td>
+      <td>${esc(c.summary || '')}</td>
+      <td>${esc(c.judge_disagreement || '')}</td>
+    </tr>`;
+  }).join('');
+}
+
+// File upload Phase 1
+document.getElementById('p1-file-input').addEventListener('change', function() {
+  if (this.files[0]) {
+    document.getElementById('p1-file-name').textContent = this.files[0].name;
+    document.getElementById('btn-upload-judge').disabled = false;
+  }
+});
+setupFileDrop('p1-file-drop', 'p1-file-input', 'p1-file-name', () => {
+  document.getElementById('btn-upload-judge').disabled = false;
+});
+
+document.getElementById('btn-upload-judge').addEventListener('click', async () => {
+  if (state.submitting) return;
+  const file = document.getElementById('p1-file-input').files[0];
+  if (!file || !state.selectedRunId) return;
+  state.submitting = true;
+  document.getElementById('btn-upload-judge').disabled = true;
+  document.getElementById('p1-upload-status').textContent = '업로드 중...';
+  try {
+    const fd = new FormData();
+    fd.append('file', file);
+    const result = await apiFetch(`/api/runs/${state.selectedRunId}/upload-judge`, { method: 'POST', body: fd });
+    document.getElementById('p1-upload-status').textContent = '업로드 완료!';
+    if (result && result.scores) updateP1Scores(result.scores);
+    if (result && result.cases) renderP1Table(result.cases);
+    if (result && result.bucket_chart) updateP1BucketChart(result.bucket_chart);
+  } catch (e) {
+    document.getElementById('p1-upload-status').textContent = '오류: ' + e.message;
+  } finally {
+    state.submitting = false;
+    document.getElementById('btn-upload-judge').disabled = false;
+  }
+});
+
+document.getElementById('btn-p1-run').addEventListener('click', async () => {
+  if (state.submitting || !state.selectedRunId) return;
+  await runPhase(1);
+});
+
+// ════════════════════════════════════════════
+// PHASE 2
+// ════════════════════════════════════════════
+document.getElementById('btn-p2-run').addEventListener('click', async () => {
+  if (state.submitting || !state.selectedRunId) return;
+  await runPhase(2);
+});
+
+function renderP2Candidates(candidates) {
+  const container = document.getElementById('p2-candidate-cards');
+  if (!candidates || !candidates.length) {
+    container.innerHTML = '<div class="text-muted">후보가 없습니다.</div>';
+    return;
+  }
+  container.innerHTML = candidates.map(c => `
+    <div class="candidate-card ${c.label === 'FINAL' ? 'final' : ''}">
+      <div class="cc-label">${esc(c.label || 'A')}</div>
+      <div class="cc-nodes">노드 수: ${c.node_count || '?'}</div>
+      <div class="cc-rationale">${esc(c.rationale || '')}</div>
+      <div class="node-prompt-tabs" id="npt-${esc(c.id)}">
+        ${(c.node_prompts || []).map((np, i) => `
+          <span class="npt-tab ${i===0?'active':''}" onclick="selectNodeTab('${esc(c.id)}', ${i}, this)">${esc(np.label || String.fromCharCode(65+i))}</span>
+        `).join('')}
+      </div>
+      <div id="npt-content-${esc(c.id)}" style="font-size:12px;color:#555;line-height:1.6;">
+        ${c.node_prompts && c.node_prompts[0] ? esc(c.node_prompts[0].content || '') : ''}
+        ${c.node_prompts && c.node_prompts[0] && c.node_prompts[0].reasoning ?
+          `<span class="reasoning-badge">추론: ${esc(c.node_prompts[0].reasoning)}</span>` : ''}
+      </div>
+    </div>
+  `).join('');
+  // Store candidates data for tab switching
+  window._p2Candidates = candidates;
+}
+
+function selectNodeTab(candidateId, idx, el) {
+  const tabContainer = document.getElementById(`npt-${candidateId}`);
+  if (!tabContainer) return;
+  tabContainer.querySelectorAll('.npt-tab').forEach(t => t.classList.remove('active'));
+  el.classList.add('active');
+  const candidates = window._p2Candidates || [];
+  const c = candidates.find(c => c.id == candidateId || String(c.id) === candidateId);
+  if (!c || !c.node_prompts) return;
+  const np = c.node_prompts[idx];
+  const contentDiv = document.getElementById(`npt-content-${candidateId}`);
+  if (contentDiv && np) {
+    contentDiv.innerHTML = esc(np.content || '') +
+      (np.reasoning ? `<span class="reasoning-badge">추론: ${esc(np.reasoning)}</span>` : '');
+  }
+}
+
+// ════════════════════════════════════════════
+// PHASE 3
+// ════════════════════════════════════════════
+function renderP3DifyCards(candidates) {
+  const container = document.getElementById('p3-dify-cards');
+  if (!candidates || !candidates.length) {
+    container.innerHTML = '<div class="text-muted">후보가 없습니다.</div>';
+    return;
+  }
+  state.difyConnections = {};
+  container.innerHTML = candidates.map(c => `
+    <div class="dify-card" id="dify-card-${esc(c.id)}">
+      <span class="dc-label">${esc(c.label || 'A')}</span>
+      <input type="text" class="dify-input" id="dify-url-${esc(c.id)}" placeholder="Dify API URL" />
+      <input type="text" class="dify-input" id="dify-key-${esc(c.id)}" placeholder="API Key" />
+      <button class="dify-connect-btn" onclick="connectDify('${esc(c.id)}', '${esc(c.label || 'A')}')">연결 확인</button>
+      <span class="dify-status" id="dify-status-${esc(c.id)}"></span>
+    </div>
+  `).join('');
+}
+
+async function connectDify(candidateId, label) {
+  if (!state.selectedRunId) return;
+  const url = document.getElementById(`dify-url-${candidateId}`)?.value?.trim();
+  const key = document.getElementById(`dify-key-${candidateId}`)?.value?.trim();
+  if (!url || !key) { alert('URL과 API Key를 입력하세요.'); return; }
+
+  const statusEl = document.getElementById(`dify-status-${candidateId}`);
+  statusEl.className = 'dify-status';
+  statusEl.textContent = '...';
+  try {
+    await apiFetch(`/api/runs/${state.selectedRunId}/phase/3/connect`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ candidate_id: candidateId, dify_api_url: url, dify_api_key: key, label })
+    });
+    statusEl.className = 'dify-status ok';
+    statusEl.textContent = '✓';
+    state.difyConnections[candidateId] = true;
+    checkAllDifyConnected();
+  } catch (e) {
+    statusEl.className = 'dify-status fail';
+    statusEl.textContent = '✗';
+    state.difyConnections[candidateId] = false;
+  }
+}
+
+function checkAllDifyConnected() {
+  const p2 = (state.runData && state.runData.phases && state.runData.phases[2]) || {};
+  const candidates = p2.candidates || [];
+  const allConnected = candidates.length > 0 && candidates.every(c => state.difyConnections[c.id]);
+  document.getElementById('btn-p3-execute').disabled = !allConnected;
+}
+
+document.getElementById('btn-p3-execute').addEventListener('click', async () => {
+  if (state.submitting || !state.selectedRunId) return;
+  state.submitting = true;
+  document.getElementById('btn-p3-execute').disabled = true;
+  try {
+    await apiFetch(`/api/runs/${state.selectedRunId}/phase/3/execute`, { method: 'POST' });
+    connectSSE(3);
+  } catch (e) {
+    appendLog('p3-log', 'error', e.message);
+    state.submitting = false;
+    document.getElementById('btn-p3-execute').disabled = false;
+  }
+});
+
+// ════════════════════════════════════════════
+// PHASE 4
+// ════════════════════════════════════════════
+document.getElementById('btn-p4-run').addEventListener('click', async () => {
+  if (state.submitting || !state.selectedRunId) return;
+  await runPhase(4);
+});
+
+function updateP4Scores(scores) {
+  const fmt = v => v != null ? v + '%' : '—';
+  document.getElementById('p4-sc1').textContent = fmt(scores.correct_plus_over);
+  document.getElementById('p4-sc2').textContent = fmt(scores.correct);
+  document.getElementById('p4-sc3').textContent = fmt(scores.over);
+  document.getElementById('p4-sc4').textContent = fmt(scores.wrong);
+}
+
+// ════════════════════════════════════════════
+// PHASE 5
+// ════════════════════════════════════════════
+async function fetchPhase5Data() {
+  if (!state.selectedRunId) return;
+  try {
+    const data = await apiFetch(`/api/runs/${state.selectedRunId}/phase/5`);
+    renderPhase5(data);
+  } catch (e) {
+    // silently ignore if not ready
+  }
+}
+
+function renderPhase5(data) {
+  if (!data) return;
+  const fmt = v => v != null ? v + '%' : '—';
+  document.getElementById('p5-sc1').textContent = fmt(data.scores && data.scores.correct_plus_over);
+  document.getElementById('p5-sc2').textContent = fmt(data.scores && data.scores.correct);
+  document.getElementById('p5-sc3').textContent = fmt(data.scores && data.scores.over);
+  document.getElementById('p5-sc4').textContent = fmt(data.scores && data.scores.wrong);
+
+  document.getElementById('p5-improve').textContent = data.delta ? data.delta.improve : '—';
+  document.getElementById('p5-regress').textContent = data.delta ? data.delta.regress : '—';
+  document.getElementById('p5-same').textContent = data.delta ? data.delta.same : '—';
+
+  // Goal banner
+  const banner = document.getElementById('p5-goal-banner');
+  banner.classList.remove('hidden');
+  const score = data.scores && data.scores.correct_plus_over;
+  if (score != null && score >= 95) {
+    banner.className = 'goal-banner achieved';
+    banner.textContent = '목표 달성! 95% ✓';
+  } else if (score != null) {
+    banner.className = 'goal-banner not-yet';
+    banner.textContent = `목표까지 ${(95 - score).toFixed(1)}%p 부족`;
+  }
+
+  // Trend chart
+  if (data.trend) updateP5TrendChart(data.trend);
+
+  // Regressed cases
+  if (data.regressed_cases) {
+    const tbody = document.getElementById('p5-regress-tbody');
+    if (!data.regressed_cases.length) {
+      tbody.innerHTML = '<tr><td colspan="3" style="text-align:center;color:#aaa;padding:20px;">회귀 없음</td></tr>';
+    } else {
+      tbody.innerHTML = data.regressed_cases.map(c => `
+        <tr>
+          <td>${esc(c.id || '')}</td>
+          <td>${esc(c.prev_judge || '')} → ${esc(c.curr_judge || '')}</td>
+          <td>${esc(c.reason || '')}</td>
+        </tr>
+      `).join('');
+    }
+  }
+}
+
+function updateP5TrendChart(trend) {
+  const ctx = document.getElementById('p5-trend-chart').getContext('2d');
+  if (state.p5TrendChart) state.p5TrendChart.destroy();
+  const labels = trend.labels || [];
+  const values = trend.values || [];
+  const goalLine = labels.map(() => 95);
+  state.p5TrendChart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        {
+          label: '정답+과답%',
+          data: values,
+          borderColor: '#cba6f7',
+          backgroundColor: 'rgba(203,166,247,0.15)',
+          tension: 0.3,
+          fill: true,
+          pointRadius: 5,
+          pointBackgroundColor: '#cba6f7'
+        },
+        {
+          label: '목표 (95%)',
+          data: goalLine,
+          borderColor: '#a6e3a1',
+          borderDash: [6, 4],
+          borderWidth: 2,
+          pointRadius: 0,
+          fill: false
+        }
+      ]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { position: 'top', labels: { font: { size: 11 } } } },
+      scales: {
+        y: { min: 0, max: 100, ticks: { callback: v => v + '%' } }
+      }
+    }
+  });
+}
+
+// ════════════════════════════════════════════
+// PHASE 6
+// ════════════════════════════════════════════
+document.getElementById('btn-p6-run').addEventListener('click', async () => {
+  if (state.submitting || !state.selectedRunId) return;
+  await runPhase(6);
+});
+
+function renderTags(containerId, tags, color) {
+  const el = document.getElementById(containerId);
+  if (!tags || !tags.length) {
+    el.innerHTML = '<span class="text-muted">없음</span>';
+    return;
+  }
+  el.innerHTML = tags.map(t =>
+    `<span class="tag-${color}">${esc(t)}</span>`
+  ).join('');
+}
+
+// ════════════════════════════════════════════
+// GENERIC PHASE RUNNER + SSE
+// ════════════════════════════════════════════
+async function runPhase(num) {
+  if (!state.selectedRunId) return;
+  state.submitting = true;
+  const btnId = `btn-p${num}-run`;
+  const btn = document.getElementById(btnId);
+  if (btn) btn.disabled = true;
+
+  setPhaseStatus(num, 'running');
+  clearLog(`p${num}-log`);
+
+  try {
+    let endpoint;
+    if (num === 3) {
+      endpoint = `/api/runs/${state.selectedRunId}/phase/3/execute`;
+    } else {
+      endpoint = `/api/runs/${state.selectedRunId}/phase/${num}/run`;
+    }
+    await apiFetch(endpoint, { method: 'POST' });
+    connectSSE(num);
+  } catch (e) {
+    appendLog(`p${num}-log`, 'error', e.message);
+    setPhaseStatus(num, 'failed');
+    state.submitting = false;
+    if (btn) btn.disabled = false;
+  }
+}
+
+function connectSSE(num) {
+  // Close existing connection for this phase
+  if (state.sseConnections[num]) {
+    state.sseConnections[num].close();
+  }
+  const evtSrc = new EventSource(`/api/runs/${state.selectedRunId}/phase/${num}/stream`);
+  state.sseConnections[num] = evtSrc;
+
+  evtSrc.onmessage = (e) => {
+    try {
+      const msg = JSON.parse(e.data);
+      handleSSEMessage(num, msg);
+    } catch (_) {}
+  };
+  evtSrc.onerror = () => {
+    setPhaseStatus(num, 'failed');
+    appendLog(`p${num}-log`, 'error', 'SSE 연결 오류');
+    evtSrc.close();
+    state.submitting = false;
+    const btn = document.getElementById(`btn-p${num}-run`);
+    if (btn) btn.disabled = false;
+  };
+}
+
+function handleSSEMessage(num, msg) {
+  const logId = `p${num}-log`;
+  switch (msg.type) {
+    case 'log':
+      appendLog(logId, msg.level || 'info', msg.message, msg.ts);
+      break;
+    case 'progress': {
+      const total = msg.total || 1;
+      const curr = msg.current || 0;
+      const pct = Math.round((curr / total) * 100);
+      if (num === 3) {
+        document.getElementById('p3-progress-text').textContent = `${curr} / ${total}`;
+        document.getElementById('p3-progress-fill').style.width = pct + '%';
+      } else if (num === 4) {
+        document.getElementById('p4-progress-text').textContent = `${curr} / ${total}`;
+        document.getElementById('p4-progress-fill').style.width = pct + '%';
+      }
+      break;
+    }
+    case 'result':
+      handlePhaseResult(num, msg.data);
+      break;
+    case 'done':
+      onPhaseSSEDone(num, msg.status);
+      break;
+  }
+}
+
+function handlePhaseResult(num, data) {
+  if (!data) return;
+  switch (num) {
+    case 1:
+      if (data.scores) updateP1Scores(data.scores);
+      if (data.cases) renderP1Table(data.cases);
+      if (data.bucket_chart) updateP1BucketChart(data.bucket_chart);
+      break;
+    case 2:
+      if (data.candidates) { renderP2Candidates(data.candidates); renderP3DifyCards(data.candidates); }
+      if (data.design_summary) document.getElementById('p2-design-summary').textContent = data.design_summary;
+      if (data.spec_summary) document.getElementById('p3-spec-summary').textContent = data.spec_summary;
+      break;
+    case 4:
+      if (data.scores) updateP4Scores(data.scores);
+      break;
+    case 6:
+      if (data.learning_rate) document.getElementById('p6-lr-badge').textContent = 'Learning Rate: ' + data.learning_rate;
+      if (data.backprop) document.getElementById('p6-backprop-text').textContent = data.backprop;
+      if (data.effective) renderTags('p6-effective-tags', data.effective, 'green');
+      if (data.harmful) renderTags('p6-harmful-tags', data.harmful, 'red');
+      if (data.next_direction) document.getElementById('p6-next-direction').value = data.next_direction;
+      break;
+  }
+}
+
+async function onPhaseSSEDone(num, status) {
+  const isDone = status === 'completed';
+  setPhaseStatus(num, isDone ? 'done' : 'failed');
+  appendLog(`p${num}-log`, isDone ? 'ok' : 'error', isDone ? '완료' : '실패');
+
+  if (state.sseConnections[num]) {
+    state.sseConnections[num].close();
+    delete state.sseConnections[num];
+  }
+  state.submitting = false;
+  const btn = document.getElementById(`btn-p${num}-run`);
+  if (btn) btn.disabled = false;
+
+  // Hide run button after start (show as completed)
+  if (isDone && btn) btn.classList.add('hidden');
+
+  // Unlock next phase
+  if (isDone && num < 6) setPhaseStatus(num + 1, state.phaseStatus[num + 1] || 'idle');
+
+  // Refresh run details + sidebar
+  try {
+    const fresh = await apiFetch(`/api/runs/${state.selectedRunId}`);
+    state.runData = fresh;
+    updateTopBar();
+    // Update sidebar badge
+    const freshTasks = await apiFetch('/api/tasks');
+    state.tasks = Array.isArray(freshTasks) ? freshTasks : state.tasks;
+    renderTaskList();
+  } catch (_) {}
+}
+
+// ════════════════════════════════════════════
+// LOG HELPERS
+// ════════════════════════════════════════════
+function appendLog(logId, level, message, ts) {
+  const box = document.getElementById(logId);
+  if (!box) return;
+  const entry = document.createElement('div');
+  entry.className = `log-entry ${level}`;
+  const timeStr = ts || new Date().toTimeString().slice(0, 8);
+  entry.innerHTML = `<span class="ts">${esc(timeStr)}</span><span class="msg">${esc(message)}</span>`;
+  box.appendChild(entry);
+  box.scrollTop = box.scrollHeight;
+}
+
+function clearLog(logId) {
+  const box = document.getElementById(logId);
+  if (box) box.innerHTML = '';
+}
+
+function replayLogs(logId, logs) {
+  clearLog(logId);
+  if (!logs) return;
+  logs.forEach(l => appendLog(logId, l.level, l.message, l.ts));
+}
+
+// ════════════════════════════════════════════
+// MODAL: NEW TASK
+// ════════════════════════════════════════════
+document.getElementById('btn-new-task').addEventListener('click', () => {
+  openModal('modal-new-task');
+});
+document.getElementById('nt-cancel').addEventListener('click', () => closeModal('modal-new-task'));
+document.getElementById('modal-new-task').addEventListener('click', (e) => {
+  if (e.target === e.currentTarget) closeModal('modal-new-task');
+});
+
+document.getElementById('nt-submit').addEventListener('click', async () => {
+  if (state.submitting) return;
+  const name = document.getElementById('nt-name').value.trim();
+  if (!name) { alert('Task명을 입력하세요.'); return; }
+  const desc = document.getElementById('nt-desc').value.trim();
+  const type = document.getElementById('nt-type').value;
+  state.submitting = true;
+  document.getElementById('nt-submit').disabled = true;
+  try {
+    const task = await apiFetch('/api/tasks', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, description: desc, summary_type: type })
+    });
+    state.tasks.push(task);
+    renderTaskList();
+    closeModal('modal-new-task');
+    document.getElementById('nt-name').value = '';
+    document.getElementById('nt-desc').value = '';
+  } catch (e) {
+    alert('오류: ' + e.message);
+  } finally {
+    state.submitting = false;
+    document.getElementById('nt-submit').disabled = false;
+  }
+});
+
+// ════════════════════════════════════════════
+// MODAL: NEW RUN
+// ════════════════════════════════════════════
+let _newRunMode = 'zero'; // 'zero' | 'continue'
+
+function openNewRunModal(mode) {
+  _newRunMode = mode;
+  // Update radio
+  const radios = document.querySelectorAll('input[name="run-mode"]');
+  radios.forEach(r => { r.checked = r.value === mode; });
+  // Update continue label with current run number
+  if (state.runData) {
+    document.getElementById('nr-continue-label').textContent =
+      `이어서 시작 (Run ${state.runData.run_number} 기반)`;
+  }
+  openModal('modal-new-run');
+}
+
+document.getElementById('btn-zero-run').addEventListener('click', () => openNewRunModal('zero'));
+document.getElementById('btn-continue-run').addEventListener('click', () => openNewRunModal('continue'));
+document.getElementById('nr-cancel').addEventListener('click', () => closeModal('modal-new-run'));
+document.getElementById('modal-new-run').addEventListener('click', (e) => {
+  if (e.target === e.currentTarget) closeModal('modal-new-run');
+});
+
+document.querySelectorAll('input[name="run-mode"]').forEach(r => {
+  r.addEventListener('change', () => { _newRunMode = r.value; });
+});
+
+document.getElementById('nr-file-input').addEventListener('change', function() {
+  if (this.files[0]) document.getElementById('nr-file-name').textContent = this.files[0].name;
+});
+setupFileDrop('nr-file-drop', 'nr-file-input', 'nr-file-name', () => {});
+
+document.getElementById('nr-submit').addEventListener('click', async () => {
+  if (state.submitting || !state.selectedTaskId) return;
+  state.submitting = true;
+  document.getElementById('nr-submit').disabled = true;
+  try {
+    const body = {
+      mode: _newRunMode,
+      based_on_run_id: _newRunMode === 'continue' ? state.selectedRunId : null
+    };
+    const newRun = await apiFetch(`/api/tasks/${state.selectedTaskId}/runs`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    // Upload judge file if provided
+    const file = document.getElementById('nr-file-input').files[0];
+    if (file && newRun && newRun.id) {
+      const fd = new FormData();
+      fd.append('file', file);
+      await apiFetch(`/api/runs/${newRun.id}/upload-judge`, { method: 'POST', body: fd });
+    }
+    closeModal('modal-new-run');
+    // Refresh tasks
+    const freshTasks = await apiFetch('/api/tasks');
+    state.tasks = Array.isArray(freshTasks) ? freshTasks : state.tasks;
+    if (newRun && newRun.id) {
+      selectRun(state.selectedTaskId, newRun.id, 1);
+    }
+  } catch (e) {
+    alert('오류: ' + e.message);
+  } finally {
+    state.submitting = false;
+    document.getElementById('nr-submit').disabled = false;
+  }
+});
+
+// ════════════════════════════════════════════
+// PHASE TABS EVENT
+// ════════════════════════════════════════════
+document.getElementById('phase-tabs').addEventListener('click', (e) => {
+  const tab = e.target.closest('.phase-tab');
+  if (!tab || tab.classList.contains('locked')) return;
+  const num = parseInt(tab.dataset.phase, 10);
+  switchPhase(num);
+});
+
+// ════════════════════════════════════════════
+// EVENT LISTENERS SETUP
+// ════════════════════════════════════════════
+function setupEventListeners() {
+  // Phase buttons are set up individually above
+}
+
+// ════════════════════════════════════════════
+// MODAL HELPERS
+// ════════════════════════════════════════════
+function openModal(id) {
+  document.getElementById(id).classList.add('open');
+}
+function closeModal(id) {
+  document.getElementById(id).classList.remove('open');
+}
+
+// ════════════════════════════════════════════
+// FILE DROP HELPER
+// ════════════════════════════════════════════
+function setupFileDrop(dropId, inputId, nameId, onFile) {
+  const drop = document.getElementById(dropId);
+  const input = document.getElementById(inputId);
+  const nameEl = document.getElementById(nameId);
+
+  drop.addEventListener('dragover', (e) => { e.preventDefault(); drop.classList.add('over'); });
+  drop.addEventListener('dragleave', () => drop.classList.remove('over'));
+  drop.addEventListener('drop', (e) => {
+    e.preventDefault();
+    drop.classList.remove('over');
+    const f = e.dataTransfer.files[0];
+    if (f) {
+      const dt = new DataTransfer();
+      dt.items.add(f);
+      input.files = dt.files;
+      nameEl.textContent = f.name;
+      onFile(f);
+    }
+  });
+}
+
+// ════════════════════════════════════════════
+// UTILITY
+// ════════════════════════════════════════════
+function esc(str) {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+</script>
+</body>
+</html>
