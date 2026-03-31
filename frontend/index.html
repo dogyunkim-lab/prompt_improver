@@ -46,6 +46,14 @@ h1, h2, h3, h4 { font-weight: 600; }
 .task-name { font-size: 13px; color: #cdd6f4; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .task-chevron { font-size: 10px; color: #6c7086; transition: transform 0.2s; }
 .task-chevron.open { transform: rotate(90deg); }
+.task-delete-btn {
+  display: none; align-items: center; justify-content: center;
+  width: 16px; height: 16px; border-radius: 3px; border: none;
+  background: transparent; color: #6c7086; font-size: 13px; line-height: 1;
+  cursor: pointer; flex-shrink: 0; padding: 0;
+}
+.task-delete-btn:hover { background: #f38ba820; color: #f38ba8; }
+.task-row:hover .task-delete-btn { display: flex; }
 
 .run-list { border-left: 2px solid #313244; margin-left: 22px; }
 .run-row {
@@ -813,8 +821,13 @@ function renderTaskList() {
       <span class="task-dot"></span>
       <span class="task-name" title="${esc(task.name)}">${esc(task.name)}</span>
       <span class="task-chevron ${isActive ? 'open' : ''}">▶</span>
+      <button class="task-delete-btn" title="삭제">✕</button>
     `;
     row.addEventListener('click', () => onTaskClick(task));
+    row.querySelector('.task-delete-btn').addEventListener('click', (e) => {
+      e.stopPropagation();
+      deleteTask(task);
+    });
     div.appendChild(row);
 
     // Run sub-list
@@ -845,6 +858,32 @@ function getRunBadge(run) {
   if (run.status === 'failed')  return { cls: 'failed',  text: '실패' };
   if (run.score_total != null) return { cls: 'score', text: Math.round(run.score_total * 100) + '%' };
   return { cls: 'pending', text: '대기' };
+}
+
+async function deleteTask(task) {
+  const runCount = task.runs ? task.runs.length : 0;
+  const msg = runCount > 0
+    ? `"${task.name}" 과 관련된 Run ${runCount}개, 모든 Phase 데이터가 삭제됩니다.\n정말 삭제하시겠습니까?`
+    : `"${task.name}" 을 삭제하시겠습니까?`;
+  if (!confirm(msg)) return;
+  try {
+    await apiFetch(`/api/tasks/${task.id}`, { method: 'DELETE' });
+    if (state.selectedTaskId == task.id) {
+      state.selectedTaskId = null;
+      state.selectedRunId = null;
+      state.runData = null;
+      localStorage.removeItem('lastTaskId');
+      localStorage.removeItem('lastRunId');
+    }
+    state.tasks = state.tasks.filter(t => t.id !== task.id);
+    renderTaskList();
+    if (state.selectedTaskId == null) {
+      document.getElementById('main-content').innerHTML =
+        '<div style="padding:40px;color:#6c7086;text-align:center;">Task를 선택하거나 새로 만드세요.</div>';
+    }
+  } catch (e) {
+    alert('삭제 오류: ' + e.message);
+  }
 }
 
 // ════════════════════════════════════════════

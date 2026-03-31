@@ -72,6 +72,19 @@ async def delete_task(task_id: int):
         async with db.execute("SELECT id FROM tasks WHERE id=?", (task_id,)) as cursor:
             if not await cursor.fetchone():
                 raise HTTPException(status_code=404, detail="Task not found")
+
+        # 연관 데이터 cascade 삭제 (run_id 목록 먼저 수집)
+        async with db.execute("SELECT id FROM runs WHERE task_id=?", (task_id,)) as cursor:
+            run_ids = [row["id"] for row in await cursor.fetchall()]
+
+        for run_id in run_ids:
+            await db.execute("DELETE FROM case_results WHERE run_id=?", (run_id,))
+            await db.execute("DELETE FROM phase_results WHERE run_id=?", (run_id,))
+            await db.execute("DELETE FROM prompt_candidates WHERE run_id=?", (run_id,))
+            await db.execute("DELETE FROM dify_connections WHERE run_id=?", (run_id,))
+
+        await db.execute("DELETE FROM case_deltas WHERE task_id=?", (task_id,))
+        await db.execute("DELETE FROM runs WHERE task_id=?", (task_id,))
         await db.execute("DELETE FROM tasks WHERE id=?", (task_id,))
         await db.commit()
         return {"ok": True}
