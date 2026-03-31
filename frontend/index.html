@@ -1174,8 +1174,8 @@ function renderP3DifyCards(candidates) {
   container.innerHTML = candidates.map(c => `
     <div class="dify-card" id="dify-card-${esc(c.id)}">
       <span class="dc-label">${esc(c.label || 'A')}</span>
-      <input type="text" class="dify-input" id="dify-url-${esc(c.id)}" placeholder="Dify API URL" />
-      <input type="text" class="dify-input" id="dify-key-${esc(c.id)}" placeholder="API Key" />
+      <label style="font-size:12px;color:#6c7086;margin-right:4px;">워크플로우 Object ID</label>
+      <input type="text" class="dify-input" id="object-id-${esc(c.label || 'A')}" placeholder="Dify 워크플로우에서 확인한 Object ID 입력" />
       <button class="dify-connect-btn" onclick="connectDify('${esc(c.id)}', '${esc(c.label || 'A')}')">연결 확인</button>
       <span class="dify-status" id="dify-status-${esc(c.id)}"></span>
     </div>
@@ -1184,9 +1184,8 @@ function renderP3DifyCards(candidates) {
 
 async function connectDify(candidateId, label) {
   if (!state.selectedRunId) return;
-  const url = document.getElementById(`dify-url-${candidateId}`)?.value?.trim();
-  const key = document.getElementById(`dify-key-${candidateId}`)?.value?.trim();
-  if (!url || !key) { alert('URL과 API Key를 입력하세요.'); return; }
+  const objectId = document.getElementById(`object-id-${label}`)?.value?.trim();
+  if (!objectId) { alert('Object ID를 입력하세요.'); return; }
 
   const statusEl = document.getElementById(`dify-status-${candidateId}`);
   statusEl.className = 'dify-status';
@@ -1195,7 +1194,7 @@ async function connectDify(candidateId, label) {
     await apiFetch(`/api/runs/${state.selectedRunId}/phase/3/connect`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ candidate_id: candidateId, dify_api_url: url, dify_api_key: key, label })
+      body: JSON.stringify({ object_id: objectId, candidate_id: candidateId, label })
     });
     statusEl.className = 'dify-status ok';
     statusEl.textContent = '✓';

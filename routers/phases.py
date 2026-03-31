@@ -8,7 +8,7 @@ from typing import Optional
 from database import get_db
 from services.phase1_analysis import run_phase1
 from services.phase2_design import run_phase2
-from services.phase3_dify import run_phase3, verify_dify_connection
+from services.phase3_dify import run_phase3, verify_dify_connection  # noqa
 from services.phase4_judge import run_phase4
 from services.phase6_strategy import run_phase6
 from services.delta import aggregate_scores
@@ -105,8 +105,7 @@ async def stream_phase2(run_id: int):
 
 class DifyConnectBody(BaseModel):
     candidate_id: Optional[int] = None
-    dify_api_url: str
-    dify_api_key: str
+    object_id: str          # Phase 2 설계 기반으로 생성한 Dify 워크플로우 고유 ID
     label: Optional[str] = None
 
 
@@ -114,15 +113,14 @@ class DifyConnectBody(BaseModel):
 async def connect_dify(run_id: int, body: DifyConnectBody):
     db = await get_db()
     try:
-        verified = await verify_dify_connection(body.dify_api_url, body.dify_api_key)
+        verified = await verify_dify_connection(body.object_id)
         status = "verified" if verified else "failed"
         now = datetime.utcnow().isoformat() if verified else None
 
         async with db.execute(
-            """INSERT INTO dify_connections (run_id, candidate_id, dify_api_url, dify_api_key, label, status, verified_at)
-               VALUES (?,?,?,?,?,?,?)""",
-            (run_id, body.candidate_id, body.dify_api_url, body.dify_api_key,
-             body.label, status, now)
+            """INSERT INTO dify_connections (run_id, candidate_id, object_id, label, status, verified_at)
+               VALUES (?,?,?,?,?,?)""",
+            (run_id, body.candidate_id, body.object_id, body.label, status, now)
         ) as cursor:
             conn_id = cursor.lastrowid
         await db.commit()

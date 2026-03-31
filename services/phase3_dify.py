@@ -4,32 +4,36 @@ import time
 from datetime import datetime
 from typing import AsyncGenerator
 import httpx
+from config import DIFY_BASE_URL
 from database import get_db
+from services.dify_auth import get_dify_token
 from services.sse_helpers import log_event, progress_event, result_event, done_event
 
 DIFY_CONCURRENCY = 5
 
 
-async def verify_dify_connection(api_url: str, api_key: str) -> bool:
-    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+async def verify_dify_connection(object_id: str) -> bool:
+    """object_id로 토큰을 발급받아 Dify 연결을 검증한다."""
     try:
+        token = await get_dify_token(object_id)
+        headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
         async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.get(f"{api_url}/workflows/run", headers=headers)
-            # 400 이상도 연결은 된 것 (endpoint 존재)
+            resp = await client.get(f"{DIFY_BASE_URL}/workflows/run", headers=headers)
             return resp.status_code < 500
     except Exception:
         return False
 
 
-async def call_dify_workflow(api_url: str, api_key: str, stt: str, keywords: str, generation_task: str) -> str:
-    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+async def call_dify_workflow(object_id: str, stt: str, keywords: str, generation_task: str) -> str:
+    token = await get_dify_token(object_id)
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
     payload = {
         "inputs": {"stt": stt, "keywords": keywords, "generation_task": generation_task},
         "response_mode": "blocking",
         "user": "improver-system"
     }
     async with httpx.AsyncClient(timeout=120.0) as client:
-        response = await client.post(f"{api_url}/workflows/run", json=payload, headers=headers)
+        response = await client.post(f"{DIFY_BASE_URL}/workflows/run", json=payload, headers=headers)
         response.raise_for_status()
         data = response.json()
         return data["data"]["outputs"]["generated"]
@@ -38,7 +42,6 @@ async def call_dify_workflow(api_url: str, api_key: str, stt: str, keywords: str
 async def run_phase3(run_id: int) -> AsyncGenerator[str, None]:
     db = await get_db()
     try:
-        # 연결 정보 조회
         async with db.execute(
             "SELECT * FROM dify_connections WHERE run_id=? AND status='verified'",
             (run_id,)
@@ -50,7 +53,6 @@ async def run_phase3(run_id: int) -> AsyncGenerator[str, None]:
             yield done_event("failed")
             return
 
-        # 케이스 목록
         async with db.execute(
             "SELECT * FROM case_results WHERE run_id=?",
             (run_id,)
@@ -78,7 +80,7 @@ async def run_phase3(run_id: int) -> AsyncGenerator[str, None]:
         completed = 0
         errors = 0
 
-        conn = connections[0]  # 첫 번째 연결 사용 (탐색 모드면 복수이나 순차 처리)
+        conn = connections[0]  # 첫 번째 연결 사용
 
         async def process_case(case: dict):
             nonlocal completed, errors
@@ -88,7 +90,7 @@ async def run_phase3(run_id: int) -> AsyncGenerator[str, None]:
                     try:
                         start_t = time.time()
                         generated = await call_dify_workflow(
-                            conn["dify_api_url"], conn["dify_api_key"],
+                            conn["object_id"],
                             case.get("stt", ""), case.get("keywords", ""),
                             case.get("generation_task", "")
                         )

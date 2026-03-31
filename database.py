@@ -75,10 +75,9 @@ async def init_db():
                 id              INTEGER PRIMARY KEY AUTOINCREMENT,
                 run_id          INTEGER NOT NULL REFERENCES runs(id),
                 candidate_id    INTEGER REFERENCES prompt_candidates(id),
-                dify_api_url    TEXT NOT NULL,
-                dify_api_key    TEXT NOT NULL,
+                object_id       TEXT NOT NULL,             -- Phase 3에서 사용자가 입력하는 워크플로우 고유 ID
                 label           TEXT,
-                status          TEXT DEFAULT 'pending',
+                status          TEXT DEFAULT 'pending',   -- pending / verified / failed
                 verified_at     DATETIME,
                 created_at      DATETIME DEFAULT CURRENT_TIMESTAMP
             );
