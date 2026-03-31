@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 from datetime import datetime
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
@@ -7,6 +8,8 @@ from pydantic import BaseModel
 from typing import Optional
 from database import get_db
 from services.phase1_analysis import run_phase1
+
+logger = logging.getLogger(__name__)
 from services.phase2_design import run_phase2
 from services.phase3_dify import run_phase3, verify_dify_connection  # noqa
 from services.phase4_judge import run_phase4
@@ -32,6 +35,9 @@ async def _run_and_queue(generator, run_id: int, phase: int):
     try:
         async for event in generator:
             await q.put(event)
+    except Exception as e:
+        logger.exception(f"[Phase {phase} / run {run_id}] 백그라운드 태스크 예외: {e}")
+        raise
     finally:
         await q.put(None)  # sentinel
 
