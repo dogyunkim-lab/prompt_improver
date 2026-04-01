@@ -933,19 +933,11 @@ h1, h2, h3, h4 { font-weight: 600; }
   <div class="modal">
     <h3>새 Run 시작</h3>
     <p style="font-size:12px;color:#888;margin-bottom:16px;line-height:1.6;">
-      Phase 1부터 새로 시작합니다. Judge JSON을 미리 업로드하거나 Phase 1에서 나중에 업로드할 수 있습니다.
+      새 Run을 생성하고 Phase 1 화면에서 Judge JSON과 프롬프트를 업로드하세요.
     </p>
-    <div class="form-group">
-      <label>Judge JSON 업로드 (선택)</label>
-      <div class="file-drop" id="nr-file-drop" onclick="document.getElementById('nr-file-input').click()">
-        <div>파일을 드래그하거나 클릭하여 업로드</div>
-        <div class="file-name" id="nr-file-name"></div>
-        <input type="file" id="nr-file-input" accept=".json" />
-      </div>
-    </div>
     <div class="modal-footer">
       <button class="btn-secondary" id="nr-cancel">취소</button>
-      <button class="btn-primary" id="nr-submit">시작</button>
+      <button class="btn-primary" id="nr-submit">생성</button>
     </div>
   </div>
 </div>
@@ -1750,16 +1742,13 @@ document.getElementById('btn-upload-judge').addEventListener('click', async () =
     const fd = new FormData();
     fd.append('file', file);
     await apiFetch(`/api/runs/${state.selectedRunId}/upload-judge`, { method: 'POST', body: fd });
-    document.getElementById('p1-upload-status').textContent = '업로드 완료! Phase 1 실행 중...';
+    document.getElementById('p1-upload-status').textContent = '업로드 완료';
     uploadOk = true;
   } catch (e) {
     document.getElementById('p1-upload-status').textContent = '오류: ' + e.message;
   } finally {
     state.submitting = false;
     document.getElementById('btn-upload-judge').disabled = false;
-  }
-  if (uploadOk) {
-    runPhase(1);
   }
 });
 
@@ -2482,22 +2471,13 @@ document.getElementById('modal-new-run').addEventListener('click', (e) => {
   if (e.target === e.currentTarget) closeModal('modal-new-run');
 });
 
-document.getElementById('nr-file-input').addEventListener('change', function() {
-  if (this.files[0]) document.getElementById('nr-file-name').textContent = this.files[0].name;
-});
-setupFileDrop('nr-file-drop', 'nr-file-input', 'nr-file-name', () => {});
-
 document.getElementById('nr-submit').addEventListener('click', async () => {
   if (!state.selectedTaskId) return;
   const submitBtn = document.getElementById('nr-submit');
   if (submitBtn.disabled) return;
 
-  const file = document.getElementById('nr-file-input').files[0];
-  let newRunId = null;
-  let didUploadFile = false;
-
   submitBtn.disabled = true;
-  submitBtn.textContent = 'Run 생성 중...';
+  submitBtn.textContent = '생성 중...';
 
   try {
     const newRun = await apiFetch(`/api/tasks/${state.selectedTaskId}/runs`, {
@@ -2505,38 +2485,20 @@ document.getElementById('nr-submit').addEventListener('click', async () => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ start_mode: 'zero', base_run_id: null })
     });
-    newRunId = newRun && newRun.id;
-
-    if (file && newRunId) {
-      submitBtn.textContent = '파일 업로드 중...';
-      const fd = new FormData();
-      fd.append('file', file);
-      await apiFetch(`/api/runs/${newRunId}/upload-judge`, { method: 'POST', body: fd });
-      didUploadFile = true;
-    }
 
     closeModal('modal-new-run');
-    document.getElementById('nr-file-input').value = '';
-    document.getElementById('nr-file-name').textContent = '';
 
-    submitBtn.textContent = '화면 로딩 중...';
     const freshTasks = await apiFetch('/api/tasks');
     state.tasks = Array.isArray(freshTasks) ? freshTasks : state.tasks;
 
-    if (newRunId) {
-      await selectRun(state.selectedTaskId, newRunId, 1);
+    if (newRun && newRun.id) {
+      await selectRun(state.selectedTaskId, newRun.id, 1);
     }
   } catch (e) {
     alert('오류: ' + e.message);
-    newRunId = null;
   } finally {
     submitBtn.disabled = false;
-    submitBtn.textContent = '시작';
-  }
-
-  // 파일이 업로드됐으면 Phase 1 자동 시작
-  if (newRunId && didUploadFile) {
-    runPhase(1);
+    submitBtn.textContent = '생성';
   }
 });
 
