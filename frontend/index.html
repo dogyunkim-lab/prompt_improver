@@ -1419,7 +1419,11 @@ function populateRunData() {
   // Continue 모드 배너 (Phase 1)
   const contBanner = document.getElementById('p1-continue-banner');
   if (state.runData.base_run_id) {
-    contBanner.textContent = `이전 Run #${state.runData.base_run_id} 기반 — Judge JSON이 Phase 4 결과에서 자동 생성되었고, Phase 6 피드백이 Phase 2에 자동 반영됩니다.`;
+    let bannerMsg = `이전 Run #${state.runData.base_run_id} 기반 — Judge JSON이 Phase 4 결과에서 자동 생성되었고, Phase 6 피드백이 Phase 2에 자동 반영됩니다.`;
+    if (state.runData.prompt_file_path) {
+      bannerMsg += `\n이전 Run에서 선택된 프롬프트가 자동 이관되었습니다.`;
+    }
+    contBanner.innerHTML = bannerMsg.replace(/\n/g, '<br>');
     contBanner.classList.remove('hidden');
   } else {
     contBanner.classList.add('hidden');
@@ -1439,7 +1443,8 @@ function populateRunData() {
   }
   // 프롬프트 파일 업로드 상태 복원
   if (state.runData && state.runData.prompt_file_path) {
-    document.getElementById('p1-prompt-status').textContent = '업로드 완료';
+    const isAutoPrompt = state.runData.base_run_id && state.runData.prompt_file_path.includes('_from_run_');
+    document.getElementById('p1-prompt-status').textContent = isAutoPrompt ? '이전 Run 프롬프트 자동 이관됨' : '업로드 완료';
     document.getElementById('p1-prompt-name').textContent = state.runData.prompt_file_path.split('/').pop();
   }
   if (p1.scores) updateP1Scores(p1.scores);
@@ -1617,6 +1622,10 @@ function renderP1Table(cases) {
   if (!cases || !cases.length) {
     tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:#aaa;padding:20px;">데이터 없음</td></tr>';
     return;
+  }
+  // state.p1Cases 동기화 (페이지 새로고침 시 DB에서 로드된 케이스 반영)
+  if (!state.p1Cases.length) {
+    state.p1Cases = cases;
   }
   tbody.innerHTML = cases.map(c => _buildP1Row(c)).join('');
   _bindP1RowClicks(tbody);

@@ -42,8 +42,9 @@ async def create_run(task_id: int, body: RunCreate):
             row = await cursor.fetchone()
             run_number = row["next_num"]
 
-        # continue 모드: 이전 Run의 Phase 4 결과를 Judge JSON 형식으로 생성
+        # continue 모드: 이전 Run의 Phase 4 결과를 Judge JSON 형식으로 생성 + 선택된 프롬프트 자동 이관
         judge_file_path = None
+        prompt_file_path = None
         if body.start_mode == 'continue' and body.base_run_id:
             async with db.execute(
                 """SELECT case_id, generation_task, stt, reference, keywords,
@@ -75,9 +76,54 @@ async def create_run(task_id: int, body: RunCreate):
                 with open(judge_file_path, "w", encoding="utf-8") as f:
                     json.dump(judge_json, f, ensure_ascii=False, indent=2)
 
+            # 이전 Run에서 선택된 후보 프롬프트 자동 이관
+            async with db.execute(
+                "SELECT selected_candidate_id FROM runs WHERE id=?",
+                (body.base_run_id,)
+            ) as cursor:
+                base_run_row = await cursor.fetchone()
+
+            if base_run_row and base_run_row["selected_candidate_id"]:
+                async with db.execute(
+                    "SELECT * FROM prompt_candidates WHERE id=?",
+                    (base_run_row["selected_candidate_id"],)
+                ) as cursor:
+                    cand = await cursor.fetchone()
+
+                if cand:
+                    cand = dict(cand)
+                    # 워크플로우 구조 + 노드별 프롬프트를 텍스트 파일로 구성
+                    lines = []
+                    lines.append(f"# 이전 Run #{body.base_run_id} 선택 프롬프트 (후보 {cand['candidate_label']})")
+                    lines.append(f"# 설계 근거: {cand.get('design_rationale', '')}")
+                    lines.append(f"# 워크플로우 노드 수: {cand.get('node_count', 1)}")
+                    lines.append("")
+
+                    node_idx = 0
+                    for label, prompt_key, model_key, reasoning_key in [
+                        ("A", "node_a_prompt", "node_a_model", "node_a_reasoning"),
+                        ("B", "node_b_prompt", "node_b_model", "node_b_reasoning"),
+                        ("C", "node_c_prompt", "node_c_model", "node_c_reasoning"),
+                    ]:
+                        prompt_text = cand.get(prompt_key)
+                        if prompt_text:
+                            node_idx += 1
+                            model = cand.get(model_key, "qwen3-30b")
+                            reasoning = "ON" if cand.get(reasoning_key) else "OFF"
+                            lines.append(f"=== Node {label} (모델: {model}, 추론: {reasoning}) ===")
+                            lines.append(prompt_text.strip())
+                            lines.append("")
+
+                    if node_idx > 0:
+                        prompt_content = "\n".join(lines)
+                        os.makedirs("data/uploads", exist_ok=True)
+                        prompt_file_path = f"data/uploads/run_{run_number}_from_run_{body.base_run_id}_prompt.txt"
+                        with open(prompt_file_path, "w", encoding="utf-8") as f:
+                            f.write(prompt_content)
+
         async with db.execute(
-            "INSERT INTO runs (task_id, run_number, start_mode, base_run_id, status, judge_file_path) VALUES (?,?,?,?,?,?)",
-            (task_id, run_number, body.start_mode, body.base_run_id, "created", judge_file_path)
+            "INSERT INTO runs (task_id, run_number, start_mode, base_run_id, status, judge_file_path, prompt_file_path) VALUES (?,?,?,?,?,?,?)",
+            (task_id, run_number, body.start_mode, body.base_run_id, "created", judge_file_path, prompt_file_path)
         ) as cursor:
             run_id = cursor.lastrowid
         await db.commit()
