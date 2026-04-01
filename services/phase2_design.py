@@ -166,7 +166,8 @@ def _build_strategy_input(
     task: dict, phase1_summary: dict, experiment_history: str,
     learning_rate: str, converge_text: str,
     improvable_count: int, total_count: int,
-    prev_run_feedback: str = ""
+    prev_run_feedback: str = "",
+    user_guide: str = ""
 ) -> str:
     template = _load_prompt(STRATEGY_PROMPT_PATH)
 
@@ -179,6 +180,10 @@ def _build_strategy_input(
     converge_context = ""
     if converge_text:
         converge_context = f"[converge 모드 — 이전 최고 성적 참조]\n{converge_text}"
+
+    user_guide_section = ""
+    if user_guide:
+        user_guide_section = f"[사용자 전략 가이드 — 반드시 준수]\n{user_guide}"
 
     return template.format(
         generation_task=task.get("generation_task", "불편사항 요약"),
@@ -193,6 +198,7 @@ def _build_strategy_input(
         learning_rate=learning_rate,
         converge_context=converge_context,
         prev_run_feedback=prev_run_feedback,
+        user_guide=user_guide_section,
     )
 
 
@@ -276,7 +282,8 @@ def _format_cases_text(cases: list) -> str:
 async def _generate_single_candidate(
     strategy_candidate: dict, design_summary: str,
     task: dict, improvable_cases: list,
-    max_retries: int = 1
+    max_retries: int = 1,
+    user_guide: str = ""
 ) -> dict | None:
     """Step 2: 개별 후보의 노드 프롬프트 생성. 실패 시 재시도."""
     label = strategy_candidate["label"]
@@ -286,6 +293,10 @@ async def _generate_single_candidate(
     # 대표 케이스 선별
     rep_cases = _select_cases_for_candidate(focus_patterns, improvable_cases)
     cases_text = _format_cases_text(rep_cases)
+
+    user_guide_section = ""
+    if user_guide:
+        user_guide_section = f"\n[사용자 전략 가이드 — 반드시 준수]\n{user_guide}\n"
 
     template = _load_prompt(CANDIDATE_PROMPT_PATH)
     prompt = template.format(
@@ -298,6 +309,7 @@ async def _generate_single_candidate(
         focus_patterns=json.dumps(focus_patterns, ensure_ascii=False),
         design_summary=design_summary,
         representative_cases=cases_text,
+        user_guide=user_guide_section,
     )
 
     for attempt in range(max_retries + 1):
@@ -491,6 +503,11 @@ async def run_phase2(run_id: int) -> AsyncGenerator[str, None]:
             if prev_run_feedback:
                 yield log_event("info", f"이전 Run #{run['base_run_id']} 피드백 주입됨")
 
+        # 사용자 전략 가이드
+        user_guide = run.get("user_guide") or ""
+        if user_guide:
+            yield log_event("info", f"사용자 전략 가이드 반영: {user_guide[:80]}{'...' if len(user_guide) > 80 else ''}")
+
         yield log_event("info", f"Design mode: {design_mode}, Learning rate: {learning_rate}")
 
         # ════════════════════════════════════════════════════════════════════
@@ -501,7 +518,8 @@ async def run_phase2(run_id: int) -> AsyncGenerator[str, None]:
         strategy_prompt = _build_strategy_input(
             task, phase1_summary, experiment_history,
             learning_rate, converge_text, improvable_count, total_count,
-            prev_run_feedback=prev_run_feedback
+            prev_run_feedback=prev_run_feedback,
+            user_guide=user_guide,
         )
         strategy_result = await _call_strategy_step(strategy_prompt, max_retries=1)
 
@@ -526,7 +544,8 @@ async def run_phase2(run_id: int) -> AsyncGenerator[str, None]:
         yield log_event("info", "Step 2/3: 후보별 프롬프트 생성 중...")
 
         generation_tasks = [
-            _generate_single_candidate(sc, design_summary, task, improvable_cases)
+            _generate_single_candidate(sc, design_summary, task, improvable_cases,
+                                       user_guide=user_guide)
             for sc in strategy_candidates
         ]
         generation_results = await asyncio.gather(*generation_tasks, return_exceptions=True)
@@ -613,6 +632,7 @@ async def run_phase2(run_id: int) -> AsyncGenerator[str, None]:
             "design_summary": design_summary,
             "candidates": candidates_with_nodes,
             "prev_run_feedback": prev_run_feedback if prev_run_feedback else None,
+            "user_guide": user_guide if user_guide else None,
         }
 
         async with db.execute(

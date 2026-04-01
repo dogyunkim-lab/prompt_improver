@@ -25,6 +25,8 @@
 
 {prev_run_feedback}
 
+{user_guide}
+
 [설계 제약]
 - 사용 모델: Qwen3-30B-A3B-Instruct (Dify 워크플로우)
 - 노드는 최대 3개까지 허용 (단일 노드도 가능)

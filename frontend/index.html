@@ -366,18 +366,32 @@ h1, h2, h3, h4 { font-weight: 600; }
 .data-table tr.p1-row { cursor: pointer; transition: background 0.1s; }
 .data-table tr.p1-row:hover td { background: rgba(203,166,247,0.08); }
 .data-table tr.p1-row.expanded td { background: rgba(203,166,247,0.12); border-bottom: none; }
-.p1-detail-row td { padding: 0 !important; border-bottom: 1px solid #e8e4d9 !important; }
-.p1-detail {
-  max-height: 360px; overflow: auto; padding: 14px 10px; margin: 0 8px 8px;
+.p1-detail-row td, .p5-detail-row td { padding: 0 !important; border-bottom: 1px solid #e8e4d9 !important; }
+.case-detail {
+  height: 320px; overflow: hidden; padding: 10px 6px; margin: 0 8px 8px;
   background: #faf9f6; border: 1px solid #e8e4d9; border-radius: 8px;
   display: flex; flex-wrap: nowrap; gap: 0; font-size: 12px;
 }
-.p1-detail::-webkit-scrollbar { width: 5px; }
-.p1-detail::-webkit-scrollbar-thumb { background: #ccc; border-radius: 3px; }
-.p1-detail-field { padding: 6px 10px; border-right: 1px solid #e8e4d9; }
+.case-detail-field { display: flex; flex-direction: column; padding: 0; border-right: 1px solid #e8e4d9; min-width: 60px; overflow: hidden; position: relative; }
+.case-detail-field:last-child { border-right: none; }
+.case-detail-label { font-size: 10px; font-weight: 700; color: #888; padding: 4px 10px; flex-shrink: 0; border-bottom: 1px solid #eee; }
+.case-detail-value { color: #333; line-height: 1.6; white-space: pre-wrap; word-break: break-word; padding: 6px 10px; overflow-y: auto; flex: 1; }
+.case-detail-value::-webkit-scrollbar { width: 4px; }
+.case-detail-value::-webkit-scrollbar-thumb { background: #ccc; border-radius: 2px; }
+/* 디테일 컬럼 리사이즈 핸들 */
+.detail-col-resize {
+  position: absolute; top: 0; right: -3px; width: 6px; height: 100%;
+  cursor: col-resize; z-index: 2; background: transparent;
+}
+.detail-col-resize:hover, .detail-col-resize.active { background: rgba(203,166,247,0.4); }
+/* 하위호환 */
+.p1-detail { height: 320px; overflow: hidden; padding: 10px 6px; margin: 0 8px 8px; background: #faf9f6; border: 1px solid #e8e4d9; border-radius: 8px; display: flex; flex-wrap: nowrap; gap: 0; font-size: 12px; }
+.p1-detail-field { display: flex; flex-direction: column; padding: 0; border-right: 1px solid #e8e4d9; min-width: 60px; overflow: hidden; position: relative; }
 .p1-detail-field:last-child { border-right: none; }
-.p1-detail-label { font-size: 10px; font-weight: 700; color: #888; margin-bottom: 3px; }
-.p1-detail-value { color: #333; line-height: 1.6; white-space: pre-wrap; word-break: break-word; }
+.p1-detail-label { font-size: 10px; font-weight: 700; color: #888; padding: 4px 10px; flex-shrink: 0; border-bottom: 1px solid #eee; }
+.p1-detail-value { color: #333; line-height: 1.6; white-space: pre-wrap; word-break: break-word; padding: 6px 10px; overflow-y: auto; flex: 1; }
+.p1-detail-value::-webkit-scrollbar { width: 4px; }
+.p1-detail-value::-webkit-scrollbar-thumb { background: #ccc; border-radius: 2px; }
 
 /* ── Section card ── */
 .section-card {
@@ -677,6 +691,17 @@ h1, h2, h3, h4 { font-weight: 600; }
             <h4 style="font-size:12px;color:#1e40af;margin-bottom:8px;">이전 Run Phase 6 피드백 (자동 주입됨)</h4>
             <div id="p2-feedback-content" style="font-size:13px;color:#333;line-height:1.7;white-space:pre-wrap;"></div>
           </div>
+
+          <div class="section-card" style="margin-bottom:16px;">
+            <h4 style="display:flex;align-items:center;gap:6px;">
+              전략 가이드 <span style="font-size:11px;color:#888;font-weight:400;">(선택사항)</span>
+            </h4>
+            <p style="font-size:12px;color:#888;margin-bottom:8px;line-height:1.5;">
+              프롬프트 설계 시 반영할 가이드를 입력하세요. 예: "Chain of thought 사용 금지 — 답변 속도 저하", "워크플로우 출력에 요약 내용만 포함, step별 사고 과정 제거" 등
+            </p>
+            <textarea id="p2-user-guide" rows="3" style="width:100%;box-sizing:border-box;border:1px solid #e8e4d9;border-radius:8px;padding:10px 12px;font-size:13px;font-family:inherit;resize:vertical;line-height:1.6;" placeholder="전략/프롬프트 설계 시 반영할 사항을 자유롭게 입력하세요..."></textarea>
+          </div>
+
           <div class="candidate-cards" id="p2-candidate-cards">
             <div class="text-muted">Phase 2 실행 후 결과가 표시됩니다.</div>
           </div>
@@ -1471,6 +1496,9 @@ function populateRunData() {
     document.getElementById('p2-feedback-content').textContent = p2.prev_run_feedback;
     document.getElementById('p2-feedback-section').classList.remove('hidden');
   }
+  // user_guide 복원
+  const guideEl = document.getElementById('p2-user-guide');
+  if (guideEl) guideEl.value = (rd && rd.user_guide) || '';
   if (p2.logs) replayLogs('p2-log', p2.logs);
 
   // Phase 3
@@ -1687,16 +1715,51 @@ function toggleP1CaseDetail(tr) {
     { label: 'Judge이견',    value: c.judge_disagreement || '-' },
   ];
 
-  const fieldsHtml = fields.map((f, i) =>
-    `<div class="p1-detail-field" style="width:${widths[i]};min-width:${widths[i]};flex-shrink:0;">` +
-      `<div class="p1-detail-label">${f.label}</div>` +
-      `<div class="p1-detail-value">${esc(f.value)}</div>` +
-    `</div>`
-  ).join('');
-
   const detailTr = document.createElement('tr');
   detailTr.className = 'p1-detail-row';
-  detailTr.innerHTML = `<td colspan="9"><div class="p1-detail">${fieldsHtml}</div></td>`;
+  const detailDiv = document.createElement('div');
+  detailDiv.className = 'p1-detail';
+
+  fields.forEach((f, i) => {
+    const field = document.createElement('div');
+    field.className = 'p1-detail-field';
+    field.style.width = widths[i];
+    field.style.minWidth = '60px';
+    field.style.flexShrink = '0';
+    field.innerHTML =
+      `<div class="p1-detail-label">${f.label}</div>` +
+      `<div class="p1-detail-value">${esc(f.value)}</div>`;
+
+    // 리사이즈 핸들 (마지막 컬럼 제외)
+    if (i < fields.length - 1) {
+      const handle = document.createElement('div');
+      handle.className = 'detail-col-resize';
+      handle.addEventListener('mousedown', (e) => {
+        e.preventDefault(); e.stopPropagation();
+        const startX = e.pageX;
+        const startW = field.offsetWidth;
+        handle.classList.add('active');
+        document.body.style.cursor = 'col-resize';
+        document.body.style.userSelect = 'none';
+        function onMove(ev) { field.style.width = Math.max(60, startW + (ev.pageX - startX)) + 'px'; }
+        function onUp() {
+          handle.classList.remove('active');
+          document.body.style.cursor = ''; document.body.style.userSelect = '';
+          document.removeEventListener('mousemove', onMove);
+          document.removeEventListener('mouseup', onUp);
+        }
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onUp);
+      });
+      field.appendChild(handle);
+    }
+    detailDiv.appendChild(field);
+  });
+
+  const td = document.createElement('td');
+  td.colSpan = 9;
+  td.appendChild(detailDiv);
+  detailTr.appendChild(td);
   tr.after(detailTr);
 }
 
@@ -1939,6 +2002,19 @@ document.getElementById('btn-p1-run').addEventListener('click', async () => {
 // ════════════════════════════════════════════
 document.getElementById('btn-p2-run').addEventListener('click', async () => {
   if (state.submitting || !state.selectedRunId) return;
+  // user_guide를 먼저 DB에 저장 후 실행
+  const userGuide = (document.getElementById('p2-user-guide').value || '').trim();
+  if (userGuide) {
+    try {
+      await apiFetch(`/api/runs/${state.selectedRunId}/user-guide`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_guide: userGuide })
+      });
+    } catch (e) {
+      appendLog('p2-log', 'warn', '가이드 저장 실패: ' + e.message);
+    }
+  }
   await runPhase(2);
 });
 
@@ -2290,12 +2366,46 @@ function renderP5Cases(cases) {
         { label: 'Reference', value: c.reference || '-' },
         { label: 'Generated', value: c.generated || '-' },
       ];
-      const fieldsHtml = fields.map(f =>
-        `<div style="margin-bottom:8px;"><div style="font-size:11px;color:#888;font-weight:600;">${f.label}</div><div style="font-size:13px;color:#333;white-space:pre-wrap;">${esc(f.value)}</div></div>`
-      ).join('');
       const detailTr = document.createElement('tr');
       detailTr.className = 'p5-detail-row';
-      detailTr.innerHTML = `<td colspan="6" style="background:#fafaf8;padding:12px 16px;">${fieldsHtml}</td>`;
+      const detailDiv = document.createElement('div');
+      detailDiv.className = 'case-detail';
+      fields.forEach((f, i) => {
+        const field = document.createElement('div');
+        field.className = 'case-detail-field';
+        field.style.flex = '1';
+        field.style.minWidth = '60px';
+        field.innerHTML =
+          `<div class="case-detail-label">${f.label}</div>` +
+          `<div class="case-detail-value">${esc(f.value)}</div>`;
+        if (i < fields.length - 1) {
+          const handle = document.createElement('div');
+          handle.className = 'detail-col-resize';
+          handle.addEventListener('mousedown', (e) => {
+            e.preventDefault(); e.stopPropagation();
+            const startX = e.pageX;
+            const startW = field.offsetWidth;
+            handle.classList.add('active');
+            document.body.style.cursor = 'col-resize';
+            document.body.style.userSelect = 'none';
+            function onMove(ev) { field.style.width = Math.max(60, startW + (ev.pageX - startX)) + 'px'; field.style.flex = 'none'; }
+            function onUp() {
+              handle.classList.remove('active');
+              document.body.style.cursor = ''; document.body.style.userSelect = '';
+              document.removeEventListener('mousemove', onMove);
+              document.removeEventListener('mouseup', onUp);
+            }
+            document.addEventListener('mousemove', onMove);
+            document.addEventListener('mouseup', onUp);
+          });
+          field.appendChild(handle);
+        }
+        detailDiv.appendChild(field);
+      });
+      const td = document.createElement('td');
+      td.colSpan = 6;
+      td.appendChild(detailDiv);
+      detailTr.appendChild(td);
       tr.after(detailTr);
     });
   });

@@ -301,6 +301,24 @@ async def get_run_summary(run_id: int):
         await db.close()
 
 
+class UserGuideBody(BaseModel):
+    user_guide: str = ""
+
+
+@router.post("/api/runs/{run_id}/user-guide")
+async def save_user_guide(run_id: int, body: UserGuideBody):
+    db = await get_db()
+    try:
+        async with db.execute("SELECT id FROM runs WHERE id=?", (run_id,)) as cursor:
+            if not await cursor.fetchone():
+                raise HTTPException(status_code=404, detail="Run not found")
+        await db.execute("UPDATE runs SET user_guide=? WHERE id=?", (body.user_guide, run_id))
+        await db.commit()
+        return {"ok": True}
+    finally:
+        await db.close()
+
+
 @router.post("/api/runs/{run_id}/upload-judge")
 async def upload_judge(run_id: int, file: UploadFile = File(...)):
     db = await get_db()

@@ -138,6 +138,8 @@ async def init_db():
             "ALTER TABLE runs ADD COLUMN selected_candidate_id INTEGER",
             # 현재 요약 프롬프트 파일 경로
             "ALTER TABLE runs ADD COLUMN prompt_file_path TEXT",
+            # Phase 2 사용자 전략 가이드
+            "ALTER TABLE runs ADD COLUMN user_guide TEXT",
         ]
         for stmt in _migration_stmts:
             try:
