@@ -411,8 +411,9 @@ async def run_phase2(run_id: int) -> AsyncGenerator[str, None]:
         phase1_summary = json.loads(p1_row["output_data"] or "{}")
 
         await db.execute(
-            """INSERT OR REPLACE INTO phase_results (run_id, phase, status, started_at)
-               VALUES (?,2,'running',?)""",
+            """INSERT INTO phase_results (run_id, phase, status, started_at)
+               VALUES (?,2,'running',?)
+               ON CONFLICT(run_id, phase) DO UPDATE SET status='running', started_at=excluded.started_at""",
             (run_id, datetime.utcnow().isoformat())
         )
         await db.commit()

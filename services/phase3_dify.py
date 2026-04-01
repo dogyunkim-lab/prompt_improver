@@ -65,8 +65,9 @@ async def run_phase3(run_id: int) -> AsyncGenerator[str, None]:
             return
 
         await db.execute(
-            """INSERT OR REPLACE INTO phase_results (run_id, phase, status, started_at)
-               VALUES (?,3,'running',?)""",
+            """INSERT INTO phase_results (run_id, phase, status, started_at)
+               VALUES (?,3,'running',?)
+               ON CONFLICT(run_id, phase) DO UPDATE SET status='running', started_at=excluded.started_at""",
             (run_id, datetime.utcnow().isoformat())
         )
         await db.commit()

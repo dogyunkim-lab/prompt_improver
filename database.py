@@ -136,6 +136,8 @@ async def init_db():
             "ALTER TABLE case_results ADD COLUMN improvement_suggestion TEXT",
             # Phase 2→3 후보 선택
             "ALTER TABLE runs ADD COLUMN selected_candidate_id INTEGER",
+            # 현재 요약 프롬프트 파일 경로
+            "ALTER TABLE runs ADD COLUMN prompt_file_path TEXT",
         ]
         for stmt in _migration_stmts:
             try:
@@ -143,3 +145,18 @@ async def init_db():
             except Exception:
                 pass  # 컬럼이 이미 존재하면 무시
         await db.commit()
+
+        # phase_results (run_id, phase) unique index — 안전한 upsert 지원
+        # 기존 DB에 중복 row가 있으면 최신 1개만 남기고 삭제
+        try:
+            await db.execute("""
+                DELETE FROM phase_results WHERE id NOT IN (
+                    SELECT MAX(id) FROM phase_results GROUP BY run_id, phase
+                )
+            """)
+            await db.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_phase_results_run_phase ON phase_results(run_id, phase)"
+            )
+            await db.commit()
+        except Exception:
+            pass

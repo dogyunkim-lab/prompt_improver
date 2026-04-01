@@ -521,6 +521,20 @@ h1, h2, h3, h4 { font-weight: 600; }
                 <span class="text-muted" id="p1-upload-status"></span>
               </div>
             </div>
+
+            <div class="section-card mb0" style="margin-bottom:16px;">
+              <h4>현재 요약 프롬프트 업로드 (선택)</h4>
+              <p style="font-size:11px;color:#888;margin-bottom:8px;">현재 사용 중인 요약 프롬프트 TXT 파일을 제공하면, Phase 1 분석 시 프롬프트 누락/위반 여부를 정확히 판단할 수 있습니다.</p>
+              <div class="file-drop" id="p1-prompt-drop" onclick="document.getElementById('p1-prompt-input').click()">
+                <div>프롬프트 TXT 파일 드래그 또는 클릭</div>
+                <div class="file-name" id="p1-prompt-name"></div>
+                <input type="file" id="p1-prompt-input" accept=".txt,.md" />
+              </div>
+              <div class="action-bar mt8">
+                <button class="btn-secondary" id="btn-upload-prompt" disabled>프롬프트 업로드</button>
+                <span class="text-muted" id="p1-prompt-status"></span>
+              </div>
+            </div>
           </div>
 
           <div class="score-cards" id="p1-score-cards">
@@ -952,6 +966,8 @@ const state = {
   selectedCandidateId: null,  // Phase 2에서 선택한 후보 ID
   p1EvalChart: null,
   p1BucketChart: null,
+  p1EvalChartData: null,     // 차트 데이터 캐시 (탭 전환 시 재렌더용)
+  p1BucketChartData: null,
   p5TrendChart: null,
   submitting: false,
   taskFilter: '',
@@ -1269,6 +1285,10 @@ function switchPhase(num, saveLocal = true) {
   const panel = document.getElementById(`panel-${num}`);
   if (panel) panel.classList.add('active');
 
+  // Phase 1: 차트가 hidden 상태에서 캐시만 된 경우 재렌더
+  if (num === 1) {
+    setTimeout(() => { _renderP1EvalChart(); _renderP1BucketChart(); }, 50);
+  }
   // Phase 5: auto fetch
   if (num === 5) fetchPhase5Data();
 }
@@ -1302,9 +1322,16 @@ function populateRunData() {
 
   // Phase 1
   const p1 = phases[1] || {};
+  // 프롬프트 파일 업로드 상태 복원
+  if (state.runData && state.runData.prompt_file_path) {
+    document.getElementById('p1-prompt-status').textContent = '업로드 완료';
+    document.getElementById('p1-prompt-name').textContent = state.runData.prompt_file_path.split('/').pop();
+  }
   if (p1.scores) updateP1Scores(p1.scores);
   if (p1.eval_chart) updateP1EvalChart(p1.eval_chart);
   if (p1.bucket_chart) updateP1BucketChart(p1.bucket_chart);
+  // 패널이 방금 visible 된 경우 레이아웃 반영 후 차트 재렌더
+  setTimeout(() => { _renderP1EvalChart(); _renderP1BucketChart(); }, 100);
   if (p1.cases) renderP1Table(p1.cases);
   if (p1.logs) replayLogs('p1-log', p1.logs);
 
@@ -1370,8 +1397,15 @@ function updateP1Scores(scores) {
 }
 
 function updateP1EvalChart(data) {
+  state.p1EvalChartData = data;  // 캐시
+  _renderP1EvalChart();
+}
+
+function _renderP1EvalChart() {
+  const data = state.p1EvalChartData;
+  if (!data) return;
   const canvas = document.getElementById('p1-eval-chart');
-  if (!canvas) return;
+  if (!canvas || !canvas.offsetParent) return;  // hidden이면 skip
   const ctx = canvas.getContext('2d');
   if (state.p1EvalChart) state.p1EvalChart.destroy();
   state.p1EvalChart = new Chart(ctx, {
@@ -1403,6 +1437,13 @@ function updateP1EvalChart(data) {
 }
 
 function updateP1BucketChart(data) {
+  state.p1BucketChartData = data;  // 캐시
+  _renderP1BucketChart();
+}
+
+function _renderP1BucketChart() {
+  const data = state.p1BucketChartData;
+  if (!data) return;
   const canvas = document.getElementById('p1-bucket-chart');
   if (!canvas) return;
   const hasData = data.values && data.values.some(v => v > 0);
@@ -1411,6 +1452,7 @@ function updateP1BucketChart(data) {
   const legend = document.getElementById('p1-bucket-legend');
   if (legend) legend.style.display = hasData ? '' : 'none';
   if (!hasData) return;
+  if (!canvas.offsetParent) return;  // hidden이면 skip
   const ctx = canvas.getContext('2d');
   if (state.p1BucketChart) state.p1BucketChart.destroy();
   state.p1BucketChart = new Chart(ctx, {
@@ -1526,6 +1568,8 @@ function resetP1UI() {
   // 차트 초기화
   if (state.p1EvalChart) { state.p1EvalChart.destroy(); state.p1EvalChart = null; }
   if (state.p1BucketChart) { state.p1BucketChart.destroy(); state.p1BucketChart = null; }
+  state.p1EvalChartData = null;
+  state.p1BucketChartData = null;
   // 케이스 상태 초기화
   state.p1Cases = [];
   state.p1Sort = { col: null, dir: 1 };
@@ -1716,6 +1760,32 @@ document.getElementById('btn-upload-judge').addEventListener('click', async () =
   }
   if (uploadOk) {
     runPhase(1);
+  }
+});
+
+// 프롬프트 TXT 업로드
+document.getElementById('p1-prompt-input').addEventListener('change', function() {
+  if (this.files[0]) {
+    document.getElementById('p1-prompt-name').textContent = this.files[0].name;
+    document.getElementById('btn-upload-prompt').disabled = false;
+  }
+});
+setupFileDrop('p1-prompt-drop', 'p1-prompt-input', 'p1-prompt-name', () => {
+  document.getElementById('btn-upload-prompt').disabled = false;
+});
+document.getElementById('btn-upload-prompt').addEventListener('click', async () => {
+  const file = document.getElementById('p1-prompt-input').files[0];
+  if (!file || !state.selectedRunId) return;
+  document.getElementById('btn-upload-prompt').disabled = true;
+  document.getElementById('p1-prompt-status').textContent = '업로드 중...';
+  try {
+    const fd = new FormData();
+    fd.append('file', file);
+    await apiFetch(`/api/runs/${state.selectedRunId}/upload-prompt`, { method: 'POST', body: fd });
+    document.getElementById('p1-prompt-status').textContent = '업로드 완료';
+  } catch (e) {
+    document.getElementById('p1-prompt-status').textContent = '오류: ' + e.message;
+    document.getElementById('btn-upload-prompt').disabled = false;
   }
 });
 

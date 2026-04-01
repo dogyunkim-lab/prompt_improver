@@ -351,9 +351,9 @@ async def get_phase5(run_id: int):
         }
 
         await db.execute(
-            """INSERT OR REPLACE INTO phase_results
-               (run_id, phase, status, output_data, started_at, completed_at)
-               VALUES (?,5,'completed',?,?,?)""",
+            """INSERT INTO phase_results (run_id, phase, status, output_data, started_at, completed_at)
+               VALUES (?,5,'completed',?,?,?)
+               ON CONFLICT(run_id, phase) DO UPDATE SET status='completed', output_data=excluded.output_data, completed_at=excluded.completed_at""",
             (run_id, json.dumps(output), datetime.utcnow().isoformat(), datetime.utcnow().isoformat())
         )
         await db.execute("UPDATE runs SET status='phase5_done' WHERE id=?", (run_id,))

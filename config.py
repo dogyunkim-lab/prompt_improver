@@ -17,4 +17,4 @@ DIFY_BASE_URL      = os.getenv("DIFY_BASE_URL", "http://내부서버주소/v1")
 # 서버
 HOST = "0.0.0.0"
 PORT = 8000
-DB_PATH = "data/improver.db"
+DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "improver.db")

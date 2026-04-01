@@ -8,6 +8,10 @@ LLM Judge의 판정은 참고자료일 뿐이다. 너는 STT 원문을 기준으
 - Generated (AI 생성 요약): {generated}
 - Judge 판정: {judge_evaluation} / 사유: {judge_reason}
 
+[현재 요약 프롬프트]
+{current_prompt}
+(위 프롬프트가 비어있으면 "프롬프트 미제공"으로 간주하고, 단계 5·6에서 프롬프트 분석을 생략하라.)
+
 [분석 지시 — 아래 순서를 반드시 따르라]
 
 단계 1: STT 원문 검증

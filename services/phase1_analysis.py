@@ -38,7 +38,8 @@ def _detect_reason_field(cases: list) -> str:
     return "reason"
 
 
-async def _call_gpt_case(case: dict, prompt_template: str, eval_field: str, reason_field: str) -> dict:
+async def _call_gpt_case(case: dict, prompt_template: str, eval_field: str, reason_field: str,
+                         current_prompt: str = "") -> dict:
     """단일 케이스 GPT 분석. DB 조작 없음 — asyncio.gather에서 병렬 실행 가능."""
     case_prompt = prompt_template.format(
         stt=case.get("stt", ""),
@@ -47,7 +48,8 @@ async def _call_gpt_case(case: dict, prompt_template: str, eval_field: str, reas
         generated=case.get("generated", ""),
         judge_evaluation=case.get(eval_field, ""),
         judge_reason=case.get(reason_field, ""),
-        case_id=case.get("id", "")
+        case_id=case.get("id", ""),
+        current_prompt=current_prompt,
     )
     raw = await call_gpt([{"role": "user", "content": case_prompt}], reasoning="high")
     result = _extract_json(raw)
@@ -61,10 +63,11 @@ async def run_phase1(run_id: int) -> AsyncGenerator[str, None]:
         async with db.execute("SELECT * FROM runs WHERE id=?", (run_id,)) as cursor:
             run = dict(await cursor.fetchone())
 
-        # phase_result 초기화
+        # phase_result 초기화 (기존 output_data 보존)
         await db.execute(
-            """INSERT OR REPLACE INTO phase_results (run_id, phase, status, started_at)
-               VALUES (?,1,'running',?)""",
+            """INSERT INTO phase_results (run_id, phase, status, started_at)
+               VALUES (?,1,'running',?)
+               ON CONFLICT(run_id, phase) DO UPDATE SET status='running', started_at=excluded.started_at""",
             (run_id, datetime.utcnow().isoformat())
         )
         await db.commit()
@@ -78,6 +81,16 @@ async def run_phase1(run_id: int) -> AsyncGenerator[str, None]:
             yield done_event("failed")
             await _mark_phase_failed(run_id, 1)
             return
+
+        # 현재 요약 프롬프트 읽기 (선택사항)
+        current_prompt = ""
+        prompt_file = run.get("prompt_file_path")
+        if prompt_file and os.path.exists(prompt_file):
+            with open(prompt_file, "r", encoding="utf-8") as f:
+                current_prompt = f.read().strip()
+            yield log_event("info", f"현재 요약 프롬프트 로드 완료 ({len(current_prompt)}자)")
+        else:
+            yield log_event("warn", "현재 요약 프롬프트가 제공되지 않았습니다. 프롬프트 없이 분석합니다.")
 
         yield log_event("info", "Judge JSON 파일 파싱 중...")
         with open(judge_file, "r", encoding="utf-8") as f:
@@ -191,7 +204,8 @@ async def run_phase1(run_id: int) -> AsyncGenerator[str, None]:
 
         async def _analyze_with_sem(c):
             async with sem:
-                return await _call_gpt_case(c, prompt_template, eval_field, reason_field)
+                return await _call_gpt_case(c, prompt_template, eval_field, reason_field,
+                                            current_prompt=current_prompt)
 
         # ── 배치 병렬 분석 ────────────────────────────────────────────────────
         done_count = 0

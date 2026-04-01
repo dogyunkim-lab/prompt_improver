@@ -244,3 +244,27 @@ async def upload_judge(run_id: int, file: UploadFile = File(...)):
         return {"ok": True, "file_path": file_path}
     finally:
         await db.close()
+
+
+@router.post("/api/runs/{run_id}/upload-prompt")
+async def upload_prompt(run_id: int, file: UploadFile = File(...)):
+    db = await get_db()
+    try:
+        async with db.execute("SELECT id FROM runs WHERE id=?", (run_id,)) as cursor:
+            if not await cursor.fetchone():
+                raise HTTPException(status_code=404, detail="Run not found")
+
+        os.makedirs("data/uploads", exist_ok=True)
+        file_path = f"data/uploads/run_{run_id}_prompt.txt"
+        with open(file_path, "wb") as f:
+            content = await file.read()
+            f.write(content)
+
+        await db.execute(
+            "UPDATE runs SET prompt_file_path=? WHERE id=?",
+            (file_path, run_id)
+        )
+        await db.commit()
+        return {"ok": True, "file_path": file_path}
+    finally:
+        await db.close()
