@@ -202,12 +202,18 @@ h1, h2, h3, h4 { font-weight: 600; }
 /* ── Table ── */
 .table-section { background: #fff; border-radius: 10px; padding: 16px; margin-bottom: 20px; box-shadow: 0 1px 4px rgba(0,0,0,0.07); }
 .table-section h4 { font-size: 13px; color: #555; margin-bottom: 12px; }
-.data-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.data-table { width: 100%; border-collapse: collapse; font-size: 12px; table-layout: fixed; }
 .data-table th {
   background: #f8f7f3; text-align: left; padding: 7px 10px;
   border-bottom: 1px solid #e8e4d9; color: #666; font-weight: 600;
+  position: relative; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.data-table td { padding: 7px 10px; border-bottom: 1px solid #f0ede4; color: #444; }
+.data-table td { padding: 7px 10px; border-bottom: 1px solid #f0ede4; color: #444; overflow: hidden; text-overflow: ellipsis; }
+.col-resize-handle {
+  position: absolute; right: 0; top: 0; width: 5px; height: 100%;
+  cursor: col-resize; user-select: none; z-index: 2;
+}
+.col-resize-handle:hover, .col-resize-handle.active { background: #cba6f7; }
 .data-table tr:last-child td { border-bottom: none; }
 .data-table tr.row-red td { background: rgba(243,139,168,0.1); }
 .data-table tr.row-yellow td { background: rgba(249,226,175,0.2); }
@@ -352,8 +358,23 @@ h1, h2, h3, h4 { font-weight: 600; }
   background: #fff; color: #333; font-size: 11px;
 }
 .col-filter:focus { border-color: #cba6f7; outline: none; }
-.cell-wrap { max-width: 220px; white-space: pre-wrap; word-break: break-all; font-size: 12px; line-height: 1.5; }
+.cell-wrap { max-width: 180px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 12px; line-height: 1.5; }
 .halluc-tag { background: #f38ba8; color: #1e1e2e; padding: 1px 5px; border-radius: 3px; font-size: 10px; font-weight: 700; margin-left: 4px; vertical-align: middle; }
+.data-table tr.p1-row { cursor: pointer; transition: background 0.1s; }
+.data-table tr.p1-row:hover td { background: rgba(203,166,247,0.08); }
+.data-table tr.p1-row.expanded td { background: rgba(203,166,247,0.12); border-bottom: none; }
+.p1-detail-row td { padding: 0 !important; border-bottom: 1px solid #e8e4d9 !important; }
+.p1-detail {
+  max-height: 320px; overflow-y: auto; padding: 14px 18px; margin: 0 8px 8px;
+  background: #faf9f6; border: 1px solid #e8e4d9; border-radius: 8px;
+  display: grid; grid-template-columns: 1fr 1fr; gap: 12px; font-size: 12px;
+}
+.p1-detail::-webkit-scrollbar { width: 5px; }
+.p1-detail::-webkit-scrollbar-thumb { background: #ccc; border-radius: 3px; }
+.p1-detail-field { }
+.p1-detail-field.full { grid-column: 1 / -1; }
+.p1-detail-label { font-size: 11px; font-weight: 700; color: #888; margin-bottom: 3px; text-transform: uppercase; letter-spacing: 0.3px; }
+.p1-detail-value { color: #333; line-height: 1.6; white-space: pre-wrap; word-break: break-word; }
 
 /* ── Section card ── */
 .section-card {
@@ -568,6 +589,17 @@ h1, h2, h3, h4 { font-weight: 600; }
             <h4>케이스 목록</h4>
             <div style="overflow-x:auto;">
               <table class="data-table" id="p1-table">
+                <colgroup>
+                  <col style="width:60px">
+                  <col style="width:70px">
+                  <col style="width:100px">
+                  <col style="width:180px">
+                  <col style="width:100px">
+                  <col style="width:180px">
+                  <col style="width:180px">
+                  <col style="width:180px">
+                  <col style="width:150px">
+                </colgroup>
                 <thead>
                   <tr>
                     <th class="sortable" data-col="id">ID <span class="sort-icon">↕</span></th>
@@ -1410,21 +1442,63 @@ function renderP1Table(cases) {
     tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:#aaa;padding:20px;">데이터 없음</td></tr>';
     return;
   }
-  tbody.innerHTML = cases.map(c => {
-    const cls = c.judge === '오답' ? 'row-red' : c.judge === '과답' ? 'row-yellow' : '';
-    const hallucTag = c.hallucination ? ' <span class="halluc-tag">환각</span>' : '';
-    return `<tr class="${cls}">
-      <td>${esc(c.id || '')}</td>
-      <td>${esc(c.judge || '')}</td>
-      <td>${esc(c.bucket || '')}${hallucTag}</td>
-      <td class="cell-wrap">${esc(c.analysis_summary || '')}</td>
-      <td>${esc(c.stt_uncertain || '')}</td>
-      <td class="cell-wrap">${esc(c.stt || '')}</td>
-      <td class="cell-wrap">${esc(c.reference || '')}</td>
-      <td class="cell-wrap">${esc(c.generated || '')}</td>
-      <td class="cell-wrap">${esc(c.judge_disagreement || '')}</td>
-    </tr>`;
-  }).join('');
+  tbody.innerHTML = cases.map(c => _buildP1Row(c)).join('');
+  _bindP1RowClicks(tbody);
+}
+
+function _buildP1Row(c) {
+  const cls = c.judge === '오답' ? 'row-red' : c.judge === '과답' ? 'row-yellow' : '';
+  const hallucTag = c.hallucination ? ' <span class="halluc-tag">환각</span>' : '';
+  const cid = esc(c.id || '');
+  return `<tr class="p1-row ${cls}" data-caseid="${cid}">
+    <td>${cid}</td>
+    <td>${esc(c.judge || '')}</td>
+    <td>${esc(c.bucket || '')}${hallucTag}</td>
+    <td class="cell-wrap">${esc(c.analysis_summary || '')}</td>
+    <td class="cell-wrap">${esc(c.stt_uncertain || '')}</td>
+    <td class="cell-wrap">${esc(c.stt || '')}</td>
+    <td class="cell-wrap">${esc(c.reference || '')}</td>
+    <td class="cell-wrap">${esc(c.generated || '')}</td>
+    <td class="cell-wrap">${esc(c.judge_disagreement || '')}</td>
+  </tr>`;
+}
+
+function _bindP1RowClicks(tbody) {
+  tbody.querySelectorAll('tr.p1-row').forEach(tr => {
+    tr.addEventListener('click', () => toggleP1CaseDetail(tr));
+  });
+}
+
+function toggleP1CaseDetail(tr) {
+  const caseId = tr.dataset.caseid;
+  const existing = tr.nextElementSibling;
+  if (existing && existing.classList.contains('p1-detail-row')) {
+    existing.remove();
+    tr.classList.remove('expanded');
+    return;
+  }
+  // 다른 열림 패널 닫기
+  document.querySelectorAll('.p1-detail-row').forEach(el => {
+    el.previousElementSibling?.classList.remove('expanded');
+    el.remove();
+  });
+  const c = state.p1Cases.find(x => String(x.id) === caseId);
+  if (!c) return;
+  tr.classList.add('expanded');
+  const detailTr = document.createElement('tr');
+  detailTr.className = 'p1-detail-row';
+  detailTr.innerHTML = `<td colspan="9"><div class="p1-detail">
+    <div class="p1-detail-field"><div class="p1-detail-label">ID</div><div class="p1-detail-value">${esc(c.id || '')}</div></div>
+    <div class="p1-detail-field"><div class="p1-detail-label">Judge 판정</div><div class="p1-detail-value">${esc(c.judge || '')}</div></div>
+    <div class="p1-detail-field"><div class="p1-detail-label">버킷</div><div class="p1-detail-value">${esc(c.bucket || '')}${c.hallucination ? ' (환각 감지)' : ''}</div></div>
+    <div class="p1-detail-field"><div class="p1-detail-label">STT 불확실 표현</div><div class="p1-detail-value">${esc(c.stt_uncertain || '-')}</div></div>
+    <div class="p1-detail-field full"><div class="p1-detail-label">분석 사유</div><div class="p1-detail-value">${esc(c.analysis_summary || '-')}</div></div>
+    <div class="p1-detail-field full"><div class="p1-detail-label">STT</div><div class="p1-detail-value">${esc(c.stt || '-')}</div></div>
+    <div class="p1-detail-field full"><div class="p1-detail-label">Reference</div><div class="p1-detail-value">${esc(c.reference || '-')}</div></div>
+    <div class="p1-detail-field full"><div class="p1-detail-label">Generated</div><div class="p1-detail-value">${esc(c.generated || '-')}</div></div>
+    <div class="p1-detail-field full"><div class="p1-detail-label">Judge 이견</div><div class="p1-detail-value">${esc(c.judge_disagreement || '-')}</div></div>
+  </div></td>`;
+  tr.after(detailTr);
 }
 
 // ── Phase 1 리셋 / 스트리밍 / 정렬·필터 ────────────────────────────────────────
@@ -1474,11 +1548,10 @@ function _appendP1RowDOM(c) {
   const tbody = document.getElementById('p1-table-body');
   // "분석 중..." / "데이터 없음" placeholder 제거
   if (tbody.querySelector('td[colspan]')) tbody.innerHTML = '';
-  const cls = c.judge === '오답' ? 'row-red' : c.judge === '과답' ? 'row-yellow' : '';
-  const tr = document.createElement('tr');
-  tr.className = cls;
-  const hallucTag = c.hallucination ? ' <span class="halluc-tag">환각</span>' : '';
-  tr.innerHTML = `<td>${esc(c.id||'')}</td><td>${esc(c.judge||'')}</td><td>${esc(c.bucket||'')}${hallucTag}</td><td class="cell-wrap">${esc(c.analysis_summary||'')}</td><td>${esc(c.stt_uncertain||'')}</td><td class="cell-wrap">${esc(c.stt||'')}</td><td class="cell-wrap">${esc(c.reference||'')}</td><td class="cell-wrap">${esc(c.generated||'')}</td><td class="cell-wrap">${esc(c.judge_disagreement||'')}</td>`;
+  const temp = document.createElement('tbody');
+  temp.innerHTML = _buildP1Row(c);
+  const tr = temp.firstElementChild;
+  tr.addEventListener('click', () => toggleP1CaseDetail(tr));
   tbody.appendChild(tr);
 }
 
@@ -1517,7 +1590,8 @@ function _updateSortIcons() {
 
 // 정렬 헤더 클릭
 document.querySelectorAll('#p1-table .sortable').forEach(th => {
-  th.addEventListener('click', () => {
+  th.addEventListener('click', (e) => {
+    if (e.target.classList.contains('col-resize-handle')) return;
     const col = th.dataset.col;
     if (state.p1Sort.col === col) {
       state.p1Sort.dir *= -1;
@@ -1536,6 +1610,47 @@ document.querySelectorAll('#p1-table .col-filter').forEach(input => {
     renderP1TableFromState();
   });
 });
+
+// ── 컬럼 리사이즈 (엑셀 스타일 드래그) ──────────────────────────────────────
+(function initColumnResize() {
+  const table = document.getElementById('p1-table');
+  if (!table) return;
+  const cols = table.querySelectorAll('colgroup col');
+  const headerRow = table.querySelector('thead tr:first-child');
+  const ths = headerRow.querySelectorAll('th');
+
+  ths.forEach((th, idx) => {
+    const handle = document.createElement('div');
+    handle.className = 'col-resize-handle';
+    th.appendChild(handle);
+
+    let startX, startW;
+
+    handle.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      startX = e.pageX;
+      startW = cols[idx].offsetWidth || th.offsetWidth;
+      handle.classList.add('active');
+      document.body.style.cursor = 'col-resize';
+      document.body.style.userSelect = 'none';
+
+      function onMove(ev) {
+        const newW = Math.max(40, startW + (ev.pageX - startX));
+        cols[idx].style.width = newW + 'px';
+      }
+      function onUp() {
+        handle.classList.remove('active');
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+      }
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    });
+  });
+})();
 
 // 중단 버튼 핸들러
 async function cancelPhase(num) {
