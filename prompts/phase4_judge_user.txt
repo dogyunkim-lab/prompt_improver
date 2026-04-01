@@ -1,0 +1,7 @@
+Conversation_history: '''{stt}'''
+
+Generation_task: {generation_task}
+Reference: {reference}
+Keywords: {keywords}
+
+Generated: {generated}

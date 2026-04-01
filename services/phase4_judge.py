@@ -7,13 +7,14 @@ from services.gpt_client import call_gpt
 from services.delta import compute_and_save_deltas, aggregate_scores
 from services.sse_helpers import log_event, progress_event, result_event, done_event
 
-PROMPT_PATH = "prompts/phase4_judge.txt"
+SYSTEM_PROMPT_PATH = "prompts/phase4_judge.txt"
+USER_PROMPT_PATH = "prompts/phase4_judge_user.txt"
 JUDGE_CONCURRENCY = 5
 
 
-def load_judge_prompt() -> str:
+def _load_prompt(path: str) -> str:
     try:
-        with open(PROMPT_PATH, "r", encoding="utf-8") as f:
+        with open(path, "r", encoding="utf-8") as f:
             return f.read()
     except FileNotFoundError:
         return ""
@@ -57,7 +58,13 @@ async def run_phase4(run_id: int) -> AsyncGenerator[str, None]:
         await db.execute("UPDATE runs SET status='phase4_running', current_phase=4 WHERE id=?", (run_id,))
         await db.commit()
 
-        judge_system = load_judge_prompt()
+        judge_system = _load_prompt(SYSTEM_PROMPT_PATH)
+        user_template = _load_prompt(USER_PROMPT_PATH)
+        if not user_template:
+            yield log_event("error", f"User 프롬프트 템플릿이 없습니다: {USER_PROMPT_PATH}")
+            yield done_event("failed")
+            return
+
         total = len(cases)
         yield log_event("info", f"Judge 실행 시작: {total}건")
 
@@ -67,16 +74,17 @@ async def run_phase4(run_id: int) -> AsyncGenerator[str, None]:
         async def judge_case(case: dict):
             nonlocal done_count
             async with semaphore:
+                user_content = user_template.format(
+                    stt=case.get("stt", ""),
+                    generation_task=case.get("generation_task", ""),
+                    reference=case.get("reference", ""),
+                    keywords=case.get("keywords", ""),
+                    generated=case.get("generated", ""),
+                )
                 messages = []
                 if judge_system:
                     messages.append({"role": "system", "content": judge_system})
-                messages.append({"role": "user", "content": f"""Conversation_history: \'\'\'{case.get('stt', '')}\'\'\'
-
-Generation_task: {case.get('generation_task', '')}
-Reference: {case.get('reference', '')}
-Keywords: {case.get('keywords', '')}
-
-Generated: {case.get('generated', '')}"""})
+                messages.append({"role": "user", "content": user_content})
                 try:
                     raw = await call_gpt(messages, reasoning="low")
                     result = _extract_json(raw)
