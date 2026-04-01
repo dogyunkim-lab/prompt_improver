@@ -508,6 +508,8 @@ h1, h2, h3, h4 { font-weight: 600; }
 
         <!-- ──────── PHASE 1 ──────── -->
         <div class="phase-panel active" id="panel-1">
+          <div id="p1-continue-banner" class="hidden" style="padding:12px 16px;background:#e8f4fd;border:1px solid #b6d4fe;border-radius:8px;margin-bottom:16px;font-size:13px;color:#1e40af;font-weight:500;">
+          </div>
           <div id="p1-upload-section">
             <div class="section-card mb0" style="margin-bottom:16px;">
               <h4>Judge JSON 업로드</h4>
@@ -799,6 +801,9 @@ h1, h2, h3, h4 { font-weight: 600; }
 
           <div class="chart-container">
             <h4>Run별 성능 추이 (정답+과답%)</h4>
+            <div id="p5-trend-notice" class="hidden" style="text-align:center;color:#888;padding:16px 0;font-size:13px;">
+              첫 번째 Run입니다. 다음 Run부터 추이 비교가 가능합니다.
+            </div>
             <div class="chart-wrap"><canvas id="p5-trend-chart"></canvas></div>
           </div>
 
@@ -830,6 +835,27 @@ h1, h2, h3, h4 { font-weight: 600; }
                 </thead>
                 <tbody id="p5-regress-tbody">
                   <tr><td colspan="3" style="text-align:center;color:#aaa;padding:20px;">데이터 없음</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="table-section">
+            <h4>전체 케이스 판정 결과</h4>
+            <div style="overflow-x:auto;">
+              <table class="data-table" id="p5-cases-table">
+                <thead>
+                  <tr>
+                    <th style="width:80px;">ID</th>
+                    <th style="width:60px;">판정</th>
+                    <th style="width:200px;">사유</th>
+                    <th>STT</th>
+                    <th>Reference</th>
+                    <th>Generated</th>
+                  </tr>
+                </thead>
+                <tbody id="p5-cases-tbody">
+                  <tr><td colspan="6" style="text-align:center;color:#aaa;padding:20px;">데이터 없음</td></tr>
                 </tbody>
               </table>
             </div>
@@ -874,6 +900,11 @@ h1, h2, h3, h4 { font-weight: 600; }
           <div class="action-bar">
             <button class="btn-primary" id="btn-p6-run">Phase 6 실행</button>
             <button class="btn-cancel hidden" id="btn-p6-cancel">■ 중단</button>
+          </div>
+
+          <div id="p6-next-run-section" class="hidden" style="margin-top:24px;padding:20px;background:#f0edf6;border-radius:10px;text-align:center;">
+            <p style="font-size:14px;color:#444;margin-bottom:12px;">Phase 6 분석이 완료되었습니다. 피드백을 반영한 다음 Run을 시작하세요.</p>
+            <button class="btn-primary" id="btn-p6-next-run" style="font-size:14px;padding:10px 24px;">다음 Run 시작 →</button>
           </div>
         </div>
 
@@ -1277,9 +1308,14 @@ function switchPhase(num, saveLocal = true) {
   const panel = document.getElementById(`panel-${num}`);
   if (panel) panel.classList.add('active');
 
-  // Phase 1: 차트가 hidden 상태에서 캐시만 된 경우 재렌더
+  // Phase 1: 차트가 hidden 상태에서 생성된 경우 resize, 또는 캐시만 된 경우 재렌더
   if (num === 1) {
-    setTimeout(() => { _renderP1EvalChart(); _renderP1BucketChart(); }, 50);
+    setTimeout(() => {
+      if (state.p1EvalChart) { try { state.p1EvalChart.resize(); } catch(e){} }
+      else { _renderP1EvalChart(); }
+      if (state.p1BucketChart) { try { state.p1BucketChart.resize(); } catch(e){} }
+      else { _renderP1BucketChart(); }
+    }, 50);
   }
   // Phase 5: auto fetch
   if (num === 5) fetchPhase5Data();
@@ -1312,6 +1348,18 @@ function populateRunData() {
   if (!state.runData) return;
   const phases = state.runData.phases || {};
 
+  // Continue 모드 배너 (Phase 1)
+  const contBanner = document.getElementById('p1-continue-banner');
+  if (state.runData.base_run_id) {
+    contBanner.textContent = `이전 Run #${state.runData.base_run_id} 기반 — Phase 6 피드백이 Phase 2에 자동 반영됩니다.`;
+    contBanner.classList.remove('hidden');
+  } else {
+    contBanner.classList.add('hidden');
+  }
+
+  // Phase 6 "다음 Run 시작" 섹션 초기 숨김
+  document.getElementById('p6-next-run-section').classList.add('hidden');
+
   // Phase 1
   const p1 = phases[1] || {};
   // 프롬프트 파일 업로드 상태 복원
@@ -1322,8 +1370,13 @@ function populateRunData() {
   if (p1.scores) updateP1Scores(p1.scores);
   if (p1.eval_chart) updateP1EvalChart(p1.eval_chart);
   if (p1.bucket_chart) updateP1BucketChart(p1.bucket_chart);
-  // 패널이 방금 visible 된 경우 레이아웃 반영 후 차트 재렌더
-  setTimeout(() => { _renderP1EvalChart(); _renderP1BucketChart(); }, 100);
+  // 패널이 방금 visible 된 경우 resize 또는 재렌더
+  setTimeout(() => {
+    if (state.p1EvalChart) { try { state.p1EvalChart.resize(); } catch(e){} }
+    else { _renderP1EvalChart(); }
+    if (state.p1BucketChart) { try { state.p1BucketChart.resize(); } catch(e){} }
+    else { _renderP1BucketChart(); }
+  }, 100);
   if (p1.cases) renderP1Table(p1.cases);
   if (p1.logs) replayLogs('p1-log', p1.logs);
 
@@ -1374,6 +1427,10 @@ function populateRunData() {
   if (p6.harmful) renderTags('p6-harmful-tags', p6.harmful, 'red');
   if (p6.next_direction) document.getElementById('p6-next-direction').value = p6.next_direction;
   if (p6.logs) replayLogs('p6-log', p6.logs);
+  // Phase 6 완료 상태 복원 시 "다음 Run 시작" 표시
+  if (p6.status === 'completed' && p6.next_direction) {
+    document.getElementById('p6-next-run-section').classList.remove('hidden');
+  }
 }
 
 // ════════════════════════════════════════════
@@ -1396,8 +1453,14 @@ function updateP1EvalChart(data) {
 function _renderP1EvalChart() {
   const data = state.p1EvalChartData;
   if (!data) return;
+  if (typeof Chart === 'undefined') {
+    console.error('[차트 오류] Chart.js가 로드되지 않았습니다. CDN 접근을 확인하세요.');
+    const wrap = document.querySelector('#p1-eval-chart')?.parentElement;
+    if (wrap) wrap.innerHTML = '<div style="color:#e64553;font-size:12px;padding:20px;">Chart.js 미로드 — CDN 접근 불가 시 로컬 파일 필요</div>';
+    return;
+  }
   const canvas = document.getElementById('p1-eval-chart');
-  if (!canvas || !canvas.offsetParent) return;  // hidden이면 skip
+  if (!canvas) return;
   const ctx = canvas.getContext('2d');
   if (state.p1EvalChart) state.p1EvalChart.destroy();
   state.p1EvalChart = new Chart(ctx, {
@@ -1436,6 +1499,7 @@ function updateP1BucketChart(data) {
 function _renderP1BucketChart() {
   const data = state.p1BucketChartData;
   if (!data) return;
+  if (typeof Chart === 'undefined') return;
   const canvas = document.getElementById('p1-bucket-chart');
   if (!canvas) return;
   const hasData = data.values && data.values.some(v => v > 0);
@@ -1444,7 +1508,6 @@ function _renderP1BucketChart() {
   const legend = document.getElementById('p1-bucket-legend');
   if (legend) legend.style.display = hasData ? '' : 'none';
   if (!hasData) return;
-  if (!canvas.offsetParent) return;  // hidden이면 skip
   const ctx = canvas.getContext('2d');
   if (state.p1BucketChart) state.p1BucketChart.destroy();
   state.p1BucketChart = new Chart(ctx, {
@@ -2016,6 +2079,9 @@ function renderPhase5(data) {
   // Trend chart
   if (data.trend) updateP5TrendChart(data.trend);
 
+  // Cases table
+  if (data.cases) renderP5Cases(data.cases);
+
   // Regressed cases
   if (data.regressed_cases) {
     const tbody = document.getElementById('p5-regress-tbody');
@@ -2034,10 +2100,28 @@ function renderPhase5(data) {
 }
 
 function updateP5TrendChart(trend) {
-  const ctx = document.getElementById('p5-trend-chart').getContext('2d');
-  if (state.p5TrendChart) state.p5TrendChart.destroy();
+  const notice = document.getElementById('p5-trend-notice');
   const labels = trend.labels || [];
   const values = trend.values || [];
+
+  // 단일 데이터포인트 안내
+  if (values.length <= 1) {
+    notice.classList.remove('hidden');
+  } else {
+    notice.classList.add('hidden');
+  }
+
+  // Chart.js 미로드 체크
+  if (typeof Chart === 'undefined') {
+    notice.textContent = '차트 라이브러리를 로드하지 못했습니다.';
+    notice.classList.remove('hidden');
+    return;
+  }
+
+  if (!labels.length) return;
+
+  const ctx = document.getElementById('p5-trend-chart').getContext('2d');
+  if (state.p5TrendChart) state.p5TrendChart.destroy();
   const goalLine = labels.map(() => 95);
   state.p5TrendChart = new Chart(ctx, {
     type: 'line',
@@ -2051,7 +2135,7 @@ function updateP5TrendChart(trend) {
           backgroundColor: 'rgba(203,166,247,0.15)',
           tension: 0.3,
           fill: true,
-          pointRadius: 5,
+          pointRadius: values.length === 1 ? 8 : 5,
           pointBackgroundColor: '#cba6f7'
         },
         {
@@ -2075,12 +2159,91 @@ function updateP5TrendChart(trend) {
   });
 }
 
+function renderP5Cases(cases) {
+  const tbody = document.getElementById('p5-cases-tbody');
+  if (!cases || !cases.length) {
+    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#aaa;padding:20px;">데이터 없음</td></tr>';
+    return;
+  }
+  tbody.innerHTML = cases.map(c => {
+    const cls = c.judge === '오답' ? 'row-red' : c.judge === '과답' ? 'row-yellow' : '';
+    return `<tr class="p5-row ${cls}" data-caseid="${esc(c.id || '')}" style="cursor:pointer;">
+      <td>${esc(c.id || '')}</td>
+      <td>${esc(c.judge || '')}</td>
+      <td class="cell-wrap">${esc(c.reason || '')}</td>
+      <td class="cell-wrap">${esc((c.stt || '').slice(0, 100))}</td>
+      <td class="cell-wrap">${esc((c.reference || '').slice(0, 100))}</td>
+      <td class="cell-wrap">${esc((c.generated || '').slice(0, 100))}</td>
+    </tr>`;
+  }).join('');
+
+  // 클릭 확장
+  tbody.querySelectorAll('tr.p5-row').forEach(tr => {
+    tr.addEventListener('click', () => {
+      const caseId = tr.dataset.caseid;
+      const existing = tr.nextElementSibling;
+      if (existing && existing.classList.contains('p5-detail-row')) {
+        existing.remove();
+        tr.classList.remove('expanded');
+        return;
+      }
+      document.querySelectorAll('.p5-detail-row').forEach(el => {
+        el.previousElementSibling?.classList.remove('expanded');
+        el.remove();
+      });
+      const c = cases.find(x => String(x.id) === caseId);
+      if (!c) return;
+      tr.classList.add('expanded');
+      const fields = [
+        { label: 'ID', value: c.id || '' },
+        { label: '판정', value: c.judge || '' },
+        { label: '사유', value: c.reason || '-' },
+        { label: 'STT', value: c.stt || '-' },
+        { label: 'Reference', value: c.reference || '-' },
+        { label: 'Generated', value: c.generated || '-' },
+      ];
+      const fieldsHtml = fields.map(f =>
+        `<div style="margin-bottom:8px;"><div style="font-size:11px;color:#888;font-weight:600;">${f.label}</div><div style="font-size:13px;color:#333;white-space:pre-wrap;">${esc(f.value)}</div></div>`
+      ).join('');
+      const detailTr = document.createElement('tr');
+      detailTr.className = 'p5-detail-row';
+      detailTr.innerHTML = `<td colspan="6" style="background:#fafaf8;padding:12px 16px;">${fieldsHtml}</td>`;
+      tr.after(detailTr);
+    });
+  });
+}
+
 // ════════════════════════════════════════════
 // PHASE 6
 // ════════════════════════════════════════════
 document.getElementById('btn-p6-run').addEventListener('click', async () => {
   if (state.submitting || !state.selectedRunId) return;
   await runPhase(6);
+});
+
+// "다음 Run 시작" 버튼 — continue 모드 Run 생성
+document.getElementById('btn-p6-next-run').addEventListener('click', async () => {
+  if (!state.selectedTaskId || !state.selectedRunId) return;
+  const btn = document.getElementById('btn-p6-next-run');
+  btn.disabled = true;
+  btn.textContent = '생성 중...';
+  try {
+    const newRun = await apiFetch(`/api/tasks/${state.selectedTaskId}/runs`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ start_mode: 'continue', base_run_id: state.selectedRunId })
+    });
+    const freshTasks = await apiFetch('/api/tasks');
+    state.tasks = Array.isArray(freshTasks) ? freshTasks : state.tasks;
+    if (newRun && newRun.id) {
+      await selectRun(state.selectedTaskId, newRun.id, 1);
+    }
+  } catch (e) {
+    alert('오류: ' + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '다음 Run 시작 →';
+  }
 });
 
 function renderTags(containerId, tags, color) {
@@ -2232,6 +2395,8 @@ function handlePhaseResult(num, data) {
       if (data.effective) renderTags('p6-effective-tags', data.effective, 'green');
       if (data.harmful) renderTags('p6-harmful-tags', data.harmful, 'red');
       if (data.next_direction) document.getElementById('p6-next-direction').value = data.next_direction;
+      // Phase 6 완료 시 "다음 Run 시작" 섹션 표시
+      document.getElementById('p6-next-run-section').classList.remove('hidden');
       break;
   }
 }

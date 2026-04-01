@@ -125,12 +125,48 @@ async def _get_best_previous_candidates(task_id: int, current_run_id: int) -> st
         await db.close()
 
 
+# ─── Step 0-b: 이전 Run Phase 6 피드백 조회 ──────────────────────────────────
+
+async def _get_prev_run_feedback(base_run_id: int) -> str:
+    """이전 Run의 Phase 6 output_data에서 next_direction, effective, harmful 텍스트를 조합."""
+    db = await get_db()
+    try:
+        async with db.execute(
+            "SELECT output_data FROM phase_results WHERE run_id=? AND phase=6 AND status='completed'",
+            (base_run_id,)
+        ) as cursor:
+            row = await cursor.fetchone()
+
+        if not row or not row["output_data"]:
+            return ""
+
+        p6 = json.loads(row["output_data"])
+        parts = []
+
+        next_dir = p6.get("next_direction", "")
+        if next_dir:
+            parts.append(f"[이전 Run Phase 6 — 다음 방향]\n{next_dir}")
+
+        effective = p6.get("effective", [])
+        if effective:
+            parts.append(f"[효과적 요소]\n" + "\n".join(f"- {e}" for e in effective))
+
+        harmful = p6.get("harmful", [])
+        if harmful:
+            parts.append(f"[해로운 요소]\n" + "\n".join(f"- {h}" for h in harmful))
+
+        return "\n\n".join(parts)
+    finally:
+        await db.close()
+
+
 # ─── Step 1: 전략 수립 ──────────────────────────────────────────────────────
 
 def _build_strategy_input(
     task: dict, phase1_summary: dict, experiment_history: str,
     learning_rate: str, converge_text: str,
-    improvable_count: int, total_count: int
+    improvable_count: int, total_count: int,
+    prev_run_feedback: str = ""
 ) -> str:
     template = _load_prompt(STRATEGY_PROMPT_PATH)
 
@@ -156,6 +192,7 @@ def _build_strategy_input(
         experiment_history=experiment_history,
         learning_rate=learning_rate,
         converge_context=converge_context,
+        prev_run_feedback=prev_run_feedback,
     )
 
 
@@ -447,6 +484,13 @@ async def run_phase2(run_id: int) -> AsyncGenerator[str, None]:
         if design_mode == "converge":
             converge_text = await _get_best_previous_candidates(run["task_id"], run_id)
 
+        # 이전 Run 피드백 조회 (continue 모드)
+        prev_run_feedback = ""
+        if run.get("base_run_id"):
+            prev_run_feedback = await _get_prev_run_feedback(run["base_run_id"])
+            if prev_run_feedback:
+                yield log_event("info", f"이전 Run #{run['base_run_id']} 피드백 주입됨")
+
         yield log_event("info", f"Design mode: {design_mode}, Learning rate: {learning_rate}")
 
         # ════════════════════════════════════════════════════════════════════
@@ -456,7 +500,8 @@ async def run_phase2(run_id: int) -> AsyncGenerator[str, None]:
 
         strategy_prompt = _build_strategy_input(
             task, phase1_summary, experiment_history,
-            learning_rate, converge_text, improvable_count, total_count
+            learning_rate, converge_text, improvable_count, total_count,
+            prev_run_feedback=prev_run_feedback
         )
         strategy_result = await _call_strategy_step(strategy_prompt, max_retries=1)
 

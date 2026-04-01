@@ -7,7 +7,7 @@ from services.gpt_client import call_gpt
 from services.delta import compute_and_save_deltas, aggregate_scores
 from services.sse_helpers import log_event, progress_event, result_event, done_event
 
-SYSTEM_PROMPT_PATH = "prompts/phase4_judge.txt"
+SYSTEM_PROMPT_PATH = "prompts/phase4_judge_system.txt"
 USER_PROMPT_PATH = "prompts/phase4_judge_user.txt"
 JUDGE_CONCURRENCY = 5
 

@@ -292,7 +292,7 @@ async def get_phase5(run_id: int):
         scores = await aggregate_scores(run_id)
 
         async with db.execute(
-            "SELECT * FROM runs WHERE task_id=? ORDER BY run_number",
+            "SELECT * FROM runs WHERE task_id=? AND score_total IS NOT NULL ORDER BY run_number",
             (run["task_id"],)
         ) as cursor:
             task_history = [
@@ -319,6 +319,13 @@ async def get_phase5(run_id: int):
                  "curr": r["curr_evaluation"], "reason": r["reason"] or ""}
                 for r in await cursor.fetchall()
             ]
+
+        async with db.execute(
+            """SELECT case_id, stt, reference, generated, evaluation, reason
+               FROM case_results WHERE run_id=? ORDER BY rowid""",
+            (run_id,)
+        ) as cursor:
+            cases_rows = [dict(row) for row in await cursor.fetchall()]
 
         goal_achieved = scores["score_total"] >= 95.0
 
@@ -350,6 +357,12 @@ async def get_phase5(run_id: int):
             ],
             "goal_achieved": goal_achieved,
             "gap_to_goal": round(max(0, 95.0 - scores["score_total"]), 1),
+            "cases": [
+                {"id": c["case_id"], "judge": c["evaluation"] or "",
+                 "reason": c["reason"] or "", "stt": c["stt"] or "",
+                 "reference": c["reference"] or "", "generated": c["generated"] or ""}
+                for c in cases_rows
+            ],
         }
 
         await db.execute(
