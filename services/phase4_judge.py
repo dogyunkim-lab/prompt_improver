@@ -197,7 +197,21 @@ async def run_phase4(run_id: int) -> AsyncGenerator[str, None]:
             "wrong": round(100 - scores["score_correct"] - scores["score_over"], 1),
             "total": scores["total"],
         }
-        output = {"scores": frontend_scores}
+        # 케이스 목록 조회 (프론트 테이블용)
+        async with db.execute(
+            """SELECT case_id, stt, reference, generated, evaluation, reason
+               FROM case_results WHERE run_id=? ORDER BY rowid""",
+            (run_id,)
+        ) as cursor:
+            result_cases = [dict(row) for row in await cursor.fetchall()]
+
+        cases_list = [{
+            "id": r["case_id"], "judge": r["evaluation"] or "",
+            "reason": r["reason"] or "", "stt": r["stt"] or "",
+            "reference": r["reference"] or "", "generated": r["generated"] or "",
+        } for r in result_cases]
+
+        output = {"scores": frontend_scores, "cases": cases_list}
         await db.execute(
             "UPDATE phase_results SET status='completed', output_data=?, completed_at=? WHERE run_id=? AND phase=4",
             (json.dumps(output), datetime.utcnow().isoformat(), run_id)

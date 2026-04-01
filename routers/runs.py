@@ -264,6 +264,27 @@ async def get_run(run_id: int):
             except Exception:
                 pass  # 마이그레이션 전 구 DB 호환
 
+        # Phase 4 케이스 결과 포함 (Judge 판정 테이블 복원)
+        if 4 in phases:
+            try:
+                async with db.execute(
+                    """SELECT case_id, stt, reference, generated, evaluation, reason
+                       FROM case_results WHERE run_id=? ORDER BY rowid""",
+                    (run_id,)
+                ) as cursor:
+                    p4_rows = [dict(row) for row in await cursor.fetchall()]
+                if p4_rows:
+                    phases[4]["cases"] = [{
+                        "id": r["case_id"],
+                        "judge": r["evaluation"] or "",
+                        "reason": r["reason"] or "",
+                        "stt": r["stt"] or "",
+                        "reference": r["reference"] or "",
+                        "generated": r["generated"] or "",
+                    } for r in p4_rows]
+            except Exception:
+                pass
+
         # Dify connections 포함 (Phase 3 복원용)
         async with db.execute(
             "SELECT * FROM dify_connections WHERE run_id=? ORDER BY id",

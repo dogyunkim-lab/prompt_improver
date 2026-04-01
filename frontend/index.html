@@ -363,10 +363,10 @@ h1, h2, h3, h4 { font-weight: 600; }
 .col-filter:focus { border-color: #cba6f7; outline: none; }
 .cell-wrap { max-width: 180px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 12px; line-height: 1.5; }
 .halluc-tag { background: #f38ba8; color: #1e1e2e; padding: 1px 5px; border-radius: 3px; font-size: 10px; font-weight: 700; margin-left: 4px; vertical-align: middle; }
-.data-table tr.p1-row { cursor: pointer; transition: background 0.1s; }
-.data-table tr.p1-row:hover td { background: rgba(203,166,247,0.08); }
-.data-table tr.p1-row.expanded td { background: rgba(203,166,247,0.12); border-bottom: none; }
-.p1-detail-row td, .p5-detail-row td { padding: 0 !important; border-bottom: 1px solid #e8e4d9 !important; }
+.data-table tr.p1-row, .data-table tr.p4-row, .data-table tr.p5-row { cursor: pointer; transition: background 0.1s; }
+.data-table tr.p1-row:hover td, .data-table tr.p4-row:hover td, .data-table tr.p5-row:hover td { background: rgba(203,166,247,0.08); }
+.data-table tr.p1-row.expanded td, .data-table tr.p4-row.expanded td, .data-table tr.p5-row.expanded td { background: rgba(203,166,247,0.12); border-bottom: none; }
+.p1-detail-row td, .p4-detail-row td, .p5-detail-row td { padding: 0 !important; border-bottom: 1px solid #e8e4d9 !important; }
 .case-detail {
   height: 320px; overflow: hidden; padding: 10px 6px; margin: 0 8px 8px;
   background: #faf9f6; border: 1px solid #e8e4d9; border-radius: 8px;
@@ -790,6 +790,43 @@ h1, h2, h3, h4 { font-weight: 600; }
               <div class="sc-label">오답%</div>
               <div class="sc-value" id="p4-sc4">—</div>
               <div class="sc-sub">틀린 답변</div>
+            </div>
+          </div>
+
+          <div class="table-section" style="margin-top:16px;">
+            <h4>케이스 목록</h4>
+            <div style="overflow-x:auto;">
+              <table class="data-table" id="p4-table">
+                <colgroup>
+                  <col style="width:60px">
+                  <col style="width:60px">
+                  <col style="width:180px">
+                  <col style="width:220px">
+                  <col style="width:220px">
+                  <col style="width:220px">
+                </colgroup>
+                <thead>
+                  <tr>
+                    <th class="sortable" data-col="id">ID <span class="sort-icon">↕</span></th>
+                    <th class="sortable" data-col="judge">판정 <span class="sort-icon">↕</span></th>
+                    <th class="sortable" data-col="reason">사유 <span class="sort-icon">↕</span></th>
+                    <th>STT</th>
+                    <th>Reference</th>
+                    <th>Generated</th>
+                  </tr>
+                  <tr>
+                    <th><input class="col-filter" data-col="id" placeholder="필터..." style="width:100%"></th>
+                    <th><input class="col-filter" data-col="judge" placeholder="필터..." style="width:100%"></th>
+                    <th><input class="col-filter" data-col="reason" placeholder="필터..." style="width:100%"></th>
+                    <th><input class="col-filter" data-col="stt" placeholder="필터..." style="width:100%"></th>
+                    <th><input class="col-filter" data-col="reference" placeholder="필터..." style="width:100%"></th>
+                    <th><input class="col-filter" data-col="generated" placeholder="필터..." style="width:100%"></th>
+                  </tr>
+                </thead>
+                <tbody id="p4-table-body">
+                  <tr><td colspan="6" style="text-align:center;color:#aaa;padding:20px;">데이터 없음</td></tr>
+                </tbody>
+              </table>
             </div>
           </div>
 
@@ -1415,6 +1452,11 @@ function populateRunData() {
   ['p4-sc1','p4-sc2','p4-sc3','p4-sc4'].forEach(id => {
     const el = document.getElementById(id); if (el) el.textContent = '—';
   });
+  state.p4Cases = [];
+  state.p4Sort = { col: null, dir: 1 };
+  state.p4Filter = { id: '', judge: '', reason: '', stt: '', reference: '', generated: '' };
+  document.querySelectorAll('#p4-table .col-filter').forEach(el => { el.value = ''; });
+  document.getElementById('p4-table-body').innerHTML = '<tr><td colspan="6" style="text-align:center;color:#aaa;padding:20px;">데이터 없음</td></tr>';
   // Phase 5 초기화
   ['p5-sc1','p5-sc2','p5-sc3','p5-sc4'].forEach(id => {
     const el = document.getElementById(id); if (el) el.textContent = '—';
@@ -1529,6 +1571,7 @@ function populateRunData() {
   // Phase 4
   const p4 = phases[4] || {};
   if (p4.scores) updateP4Scores(p4.scores);
+  if (p4.cases) { state.p4Cases = p4.cases; renderP4Cases(p4.cases); }
   if (p4.logs) replayLogs('p4-log', p4.logs);
 
   // Phase 6
@@ -2203,6 +2246,155 @@ function updateP4Scores(scores) {
   document.getElementById('p4-sc4').textContent = fmt(scores.wrong);
 }
 
+// ── Phase 4 케이스 테이블 ─────────────────────────────────────────────────
+state.p4Cases = [];
+state.p4Sort = { col: null, dir: 1 };
+state.p4Filter = { id: '', judge: '', reason: '', stt: '', reference: '', generated: '' };
+
+function _buildP4Row(c) {
+  const cls = c.judge === '오답' ? 'row-red' : c.judge === '과답' ? 'row-yellow' : '';
+  return `<tr class="p4-row ${cls}" data-caseid="${esc(c.id || '')}" style="cursor:pointer;">
+    <td>${esc(c.id || '')}</td>
+    <td>${esc(c.judge || '')}</td>
+    <td class="cell-wrap">${esc(c.reason || '')}</td>
+    <td class="cell-wrap">${esc((c.stt || '').slice(0, 100))}</td>
+    <td class="cell-wrap">${esc((c.reference || '').slice(0, 100))}</td>
+    <td class="cell-wrap">${esc((c.generated || '').slice(0, 100))}</td>
+  </tr>`;
+}
+
+function renderP4Cases(cases) {
+  const tbody = document.getElementById('p4-table-body');
+  if (!cases || !cases.length) {
+    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#aaa;padding:20px;">데이터 없음</td></tr>';
+    return;
+  }
+  if (!state.p4Cases.length) state.p4Cases = cases;
+  tbody.innerHTML = cases.map(c => _buildP4Row(c)).join('');
+  _bindP4RowClicks(tbody);
+}
+
+function _bindP4RowClicks(tbody) {
+  tbody.querySelectorAll('tr.p4-row').forEach(tr => {
+    tr.addEventListener('click', () => toggleP4CaseDetail(tr));
+  });
+}
+
+function toggleP4CaseDetail(tr) {
+  const caseId = tr.dataset.caseid;
+  const existing = tr.nextElementSibling;
+  if (existing && existing.classList.contains('p4-detail-row')) {
+    existing.remove();
+    tr.classList.remove('expanded');
+    return;
+  }
+  document.querySelectorAll('.p4-detail-row').forEach(el => {
+    el.previousElementSibling?.classList.remove('expanded');
+    el.remove();
+  });
+  const c = state.p4Cases.find(x => String(x.id) === caseId);
+  if (!c) return;
+  tr.classList.add('expanded');
+
+  const cols = document.querySelectorAll('#p4-table colgroup col');
+  const widths = Array.from(cols).map(col => col.style.width || 'auto');
+
+  const fields = [
+    { label: 'ID', value: c.id || '' },
+    { label: '판정', value: c.judge || '' },
+    { label: '사유', value: c.reason || '-' },
+    { label: 'STT', value: c.stt || '-' },
+    { label: 'Reference', value: c.reference || '-' },
+    { label: 'Generated', value: c.generated || '-' },
+  ];
+
+  const detailTr = document.createElement('tr');
+  detailTr.className = 'p4-detail-row';
+  const detailDiv = document.createElement('div');
+  detailDiv.className = 'case-detail';
+
+  fields.forEach((f, i) => {
+    const field = document.createElement('div');
+    field.className = 'case-detail-field';
+    field.style.width = widths[i];
+    field.style.minWidth = '60px';
+    field.style.flexShrink = '0';
+    field.innerHTML =
+      `<div class="case-detail-label">${f.label}</div>` +
+      `<div class="case-detail-value">${esc(f.value)}</div>`;
+    if (i < fields.length - 1) {
+      const handle = document.createElement('div');
+      handle.className = 'detail-col-resize';
+      handle.addEventListener('mousedown', (e) => {
+        e.preventDefault(); e.stopPropagation();
+        const startX = e.pageX;
+        const startW = field.offsetWidth;
+        handle.classList.add('active');
+        document.body.style.cursor = 'col-resize';
+        document.body.style.userSelect = 'none';
+        function onMove(ev) { field.style.width = Math.max(60, startW + (ev.pageX - startX)) + 'px'; }
+        function onUp() {
+          handle.classList.remove('active');
+          document.body.style.cursor = ''; document.body.style.userSelect = '';
+          document.removeEventListener('mousemove', onMove);
+          document.removeEventListener('mouseup', onUp);
+        }
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onUp);
+      });
+      field.appendChild(handle);
+    }
+    detailDiv.appendChild(field);
+  });
+
+  const td = document.createElement('td');
+  td.colSpan = 6;
+  td.appendChild(detailDiv);
+  detailTr.appendChild(td);
+  tr.after(detailTr);
+}
+
+function renderP4TableFromState() {
+  let cases = [...state.p4Cases];
+  const f = state.p4Filter;
+  cases = cases.filter(c =>
+    (!f.id        || String(c.id||'').toLowerCase().includes(f.id.toLowerCase())) &&
+    (!f.judge     || (c.judge||'').toLowerCase().includes(f.judge.toLowerCase())) &&
+    (!f.reason    || (c.reason||'').toLowerCase().includes(f.reason.toLowerCase())) &&
+    (!f.stt       || (c.stt||'').toLowerCase().includes(f.stt.toLowerCase())) &&
+    (!f.reference || (c.reference||'').toLowerCase().includes(f.reference.toLowerCase())) &&
+    (!f.generated || (c.generated||'').toLowerCase().includes(f.generated.toLowerCase()))
+  );
+  const s = state.p4Sort;
+  if (s.col) {
+    cases.sort((a, b) => String(a[s.col]||'').localeCompare(String(b[s.col]||''), 'ko') * s.dir);
+  }
+  renderP4Cases(cases);
+}
+
+// Phase 4 정렬 헤더 클릭
+document.querySelectorAll('#p4-table .sortable').forEach(th => {
+  th.addEventListener('click', (e) => {
+    if (e.target.classList.contains('col-resize-handle')) return;
+    const col = th.dataset.col;
+    if (state.p4Sort.col === col) {
+      state.p4Sort.dir *= -1;
+    } else {
+      state.p4Sort.col = col;
+      state.p4Sort.dir = 1;
+    }
+    renderP4TableFromState();
+  });
+});
+
+// Phase 4 필터 입력
+document.querySelectorAll('#p4-table .col-filter').forEach(input => {
+  input.addEventListener('input', () => {
+    state.p4Filter[input.dataset.col] = input.value;
+    renderP4TableFromState();
+  });
+});
+
 // ════════════════════════════════════════════
 // PHASE 5
 // ════════════════════════════════════════════
@@ -2590,6 +2782,7 @@ function handlePhaseResult(num, data) {
       break;
     case 4:
       if (data.scores) updateP4Scores(data.scores);
+      if (data.cases) { state.p4Cases = data.cases; renderP4Cases(data.cases); }
       break;
     case 6:
       if (data.learning_rate) document.getElementById('p6-lr-badge').textContent = 'Learning Rate: ' + data.learning_rate;
