@@ -1916,20 +1916,26 @@ async function connectDify(candidateId, label) {
 
   const statusEl = document.getElementById(`dify-status-${candidateId}`);
   statusEl.className = 'dify-status';
-  statusEl.textContent = '...';
+  statusEl.textContent = '검증 중...';
   try {
-    await apiFetch(`/api/runs/${state.selectedRunId}/phase/3/connect`, {
+    const res = await apiFetch(`/api/runs/${state.selectedRunId}/phase/3/connect`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ object_id: objectId, candidate_id: candidateId, label })
     });
-    statusEl.className = 'dify-status ok';
-    statusEl.textContent = '✓';
-    state.difyConnections[candidateId] = true;
+    if (res.verified) {
+      statusEl.className = 'dify-status ok';
+      statusEl.textContent = '✓ 연결 성공';
+      state.difyConnections[candidateId] = true;
+    } else {
+      statusEl.className = 'dify-status fail';
+      statusEl.textContent = '✗ ' + (res.message || '연결 실패');
+      state.difyConnections[candidateId] = false;
+    }
     checkAllDifyConnected();
   } catch (e) {
     statusEl.className = 'dify-status fail';
-    statusEl.textContent = '✗';
+    statusEl.textContent = '✗ 요청 오류: ' + e.message;
     state.difyConnections[candidateId] = false;
   }
 }

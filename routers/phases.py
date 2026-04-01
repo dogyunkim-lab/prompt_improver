@@ -186,10 +186,12 @@ class DifyConnectBody(BaseModel):
 async def connect_dify(run_id: int, body: DifyConnectBody):
     db = await get_db()
     try:
-        verified = await verify_dify_connection(body.object_id)
+        verified, message = await verify_dify_connection(body.object_id)
         status = "verified" if verified else "failed"
         now = datetime.utcnow().isoformat() if verified else None
 
+        # 같은 run의 기존 연결 삭제 후 새로 삽입 (재시도 지원)
+        await db.execute("DELETE FROM dify_connections WHERE run_id=?", (run_id,))
         async with db.execute(
             """INSERT INTO dify_connections (run_id, candidate_id, object_id, label, status, verified_at)
                VALUES (?,?,?,?,?,?)""",
@@ -197,7 +199,7 @@ async def connect_dify(run_id: int, body: DifyConnectBody):
         ) as cursor:
             conn_id = cursor.lastrowid
         await db.commit()
-        return {"id": conn_id, "status": status, "verified": verified}
+        return {"id": conn_id, "status": status, "verified": verified, "message": message}
     finally:
         await db.close()
 

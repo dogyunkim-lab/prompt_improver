@@ -12,23 +12,34 @@ from services.sse_helpers import log_event, progress_event, result_event, done_e
 DIFY_CONCURRENCY = 5
 
 
-async def verify_dify_connection(object_id: str) -> bool:
-    """object_id로 토큰을 발급받아 Dify 연결을 검증한다."""
+async def verify_dify_connection(object_id: str) -> tuple[bool, str]:
+    """object_id로 토큰을 발급받아 Dify 연결을 검증한다. (성공여부, 메시지) 반환."""
     try:
         token = await get_dify_token(object_id)
+    except NotImplementedError:
+        return False, "토큰 발급 함수(_issue_token)가 구현되지 않았습니다. services/dify_auth.py를 확인하세요."
+    except Exception as e:
+        return False, f"토큰 발급 실패: {e}"
+
+    try:
         headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.get(f"{DIFY_BASE_URL}/workflows/run", headers=headers)
-            return resp.status_code < 500
-    except Exception:
-        return False
+        payload = {"inputs": {}, "response_mode": "blocking", "user": "verify-test"}
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.post(f"{DIFY_BASE_URL}/workflows/run", json=payload, headers=headers)
+            if resp.status_code < 400:
+                return True, f"연결 성공 (HTTP {resp.status_code})"
+            else:
+                body = resp.text[:200]
+                return False, f"Dify 응답 오류 (HTTP {resp.status_code}): {body}"
+    except Exception as e:
+        return False, f"Dify 연결 실패: {e}"
 
 
-async def call_dify_workflow(object_id: str, stt: str, keywords: str, generation_task: str) -> str:
+async def call_dify_workflow(object_id: str, stt: str) -> str:
     token = await get_dify_token(object_id)
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
     payload = {
-        "inputs": {"stt": stt, "keywords": keywords, "generation_task": generation_task},
+        "inputs": {"stt": stt},
         "response_mode": "blocking",
         "user": "improver-system"
     }
@@ -92,8 +103,7 @@ async def run_phase3(run_id: int) -> AsyncGenerator[str, None]:
                         start_t = time.time()
                         generated = await call_dify_workflow(
                             conn["object_id"],
-                            case.get("stt", ""), case.get("keywords", ""),
-                            case.get("generation_task", "")
+                            case.get("stt", "")
                         )
                         elapsed = round(time.time() - start_t, 1)
                         await db.execute(
