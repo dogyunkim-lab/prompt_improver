@@ -365,15 +365,15 @@ h1, h2, h3, h4 { font-weight: 600; }
 .data-table tr.p1-row.expanded td { background: rgba(203,166,247,0.12); border-bottom: none; }
 .p1-detail-row td { padding: 0 !important; border-bottom: 1px solid #e8e4d9 !important; }
 .p1-detail {
-  max-height: 320px; overflow-y: auto; padding: 14px 18px; margin: 0 8px 8px;
+  max-height: 360px; overflow: auto; padding: 14px 10px; margin: 0 8px 8px;
   background: #faf9f6; border: 1px solid #e8e4d9; border-radius: 8px;
-  display: grid; grid-template-columns: 1fr 1fr; gap: 12px; font-size: 12px;
+  display: flex; flex-wrap: nowrap; gap: 0; font-size: 12px;
 }
 .p1-detail::-webkit-scrollbar { width: 5px; }
 .p1-detail::-webkit-scrollbar-thumb { background: #ccc; border-radius: 3px; }
-.p1-detail-field { }
-.p1-detail-field.full { grid-column: 1 / -1; }
-.p1-detail-label { font-size: 11px; font-weight: 700; color: #888; margin-bottom: 3px; text-transform: uppercase; letter-spacing: 0.3px; }
+.p1-detail-field { padding: 6px 10px; border-right: 1px solid #e8e4d9; }
+.p1-detail-field:last-child { border-right: none; }
+.p1-detail-label { font-size: 10px; font-weight: 700; color: #888; margin-bottom: 3px; }
 .p1-detail-value { color: #333; line-height: 1.6; white-space: pre-wrap; word-break: break-word; }
 
 /* ── Section card ── */
@@ -1453,7 +1453,7 @@ function _buildP1Row(c) {
   return `<tr class="p1-row ${cls}" data-caseid="${cid}">
     <td>${cid}</td>
     <td>${esc(c.judge || '')}</td>
-    <td>${esc(c.bucket || '')}${hallucTag}</td>
+    <td>${esc(bucketKo(c.bucket || ''))}${hallucTag}</td>
     <td class="cell-wrap">${esc(c.analysis_summary || '')}</td>
     <td class="cell-wrap">${esc(c.stt_uncertain || '')}</td>
     <td class="cell-wrap">${esc(c.stt || '')}</td>
@@ -1485,19 +1485,33 @@ function toggleP1CaseDetail(tr) {
   const c = state.p1Cases.find(x => String(x.id) === caseId);
   if (!c) return;
   tr.classList.add('expanded');
+
+  // 테이블 colgroup에서 실제 컬럼 너비 읽기
+  const cols = document.querySelectorAll('#p1-table colgroup col');
+  const widths = Array.from(cols).map(col => col.style.width || 'auto');
+
+  const fields = [
+    { label: 'ID',           value: c.id || '' },
+    { label: 'Judge 판정',   value: c.judge || '' },
+    { label: '버킷',         value: bucketKo(c.bucket || '') + (c.hallucination ? ' (환각)' : '') },
+    { label: '분석사유',      value: c.analysis_summary || '-' },
+    { label: 'STT불확실표현', value: c.stt_uncertain || '-' },
+    { label: 'STT',          value: c.stt || '-' },
+    { label: 'Reference',    value: c.reference || '-' },
+    { label: 'Generated',    value: c.generated || '-' },
+    { label: 'Judge이견',    value: c.judge_disagreement || '-' },
+  ];
+
+  const fieldsHtml = fields.map((f, i) =>
+    `<div class="p1-detail-field" style="width:${widths[i]};min-width:${widths[i]};flex-shrink:0;">` +
+      `<div class="p1-detail-label">${f.label}</div>` +
+      `<div class="p1-detail-value">${esc(f.value)}</div>` +
+    `</div>`
+  ).join('');
+
   const detailTr = document.createElement('tr');
   detailTr.className = 'p1-detail-row';
-  detailTr.innerHTML = `<td colspan="9"><div class="p1-detail">
-    <div class="p1-detail-field"><div class="p1-detail-label">ID</div><div class="p1-detail-value">${esc(c.id || '')}</div></div>
-    <div class="p1-detail-field"><div class="p1-detail-label">Judge 판정</div><div class="p1-detail-value">${esc(c.judge || '')}</div></div>
-    <div class="p1-detail-field"><div class="p1-detail-label">버킷</div><div class="p1-detail-value">${esc(c.bucket || '')}${c.hallucination ? ' (환각 감지)' : ''}</div></div>
-    <div class="p1-detail-field"><div class="p1-detail-label">STT 불확실 표현</div><div class="p1-detail-value">${esc(c.stt_uncertain || '-')}</div></div>
-    <div class="p1-detail-field full"><div class="p1-detail-label">분석 사유</div><div class="p1-detail-value">${esc(c.analysis_summary || '-')}</div></div>
-    <div class="p1-detail-field full"><div class="p1-detail-label">STT</div><div class="p1-detail-value">${esc(c.stt || '-')}</div></div>
-    <div class="p1-detail-field full"><div class="p1-detail-label">Reference</div><div class="p1-detail-value">${esc(c.reference || '-')}</div></div>
-    <div class="p1-detail-field full"><div class="p1-detail-label">Generated</div><div class="p1-detail-value">${esc(c.generated || '-')}</div></div>
-    <div class="p1-detail-field full"><div class="p1-detail-label">Judge 이견</div><div class="p1-detail-value">${esc(c.judge_disagreement || '-')}</div></div>
-  </div></td>`;
+  detailTr.innerHTML = `<td colspan="9"><div class="p1-detail">${fieldsHtml}</div></td>`;
   tr.after(detailTr);
 }
 
@@ -1561,7 +1575,7 @@ function renderP1TableFromState() {
   cases = cases.filter(c =>
     (!f.id                 || String(c.id||'').toLowerCase().includes(f.id.toLowerCase())) &&
     (!f.judge              || String(c.judge||'').toLowerCase().includes(f.judge.toLowerCase())) &&
-    (!f.bucket             || String(c.bucket||'').toLowerCase().includes(f.bucket.toLowerCase())) &&
+    (!f.bucket             || bucketKo(c.bucket||'').toLowerCase().includes(f.bucket.toLowerCase())) &&
     (!f.analysis_summary   || String(c.analysis_summary||'').toLowerCase().includes(f.analysis_summary.toLowerCase())) &&
     (!f.stt_uncertain      || String(c.stt_uncertain||'').toLowerCase().includes(f.stt_uncertain.toLowerCase())) &&
     (!f.stt                || String(c.stt||'').toLowerCase().includes(f.stt.toLowerCase())) &&
@@ -2516,6 +2530,9 @@ function fmtDate(dateStr) {
   if (isNaN(d)) return '';
   return (d.getMonth() + 1).toString().padStart(2, '0') + '/' + d.getDate().toString().padStart(2, '0');
 }
+
+const BUCKET_KO = { stt_error: 'STT 오류', prompt_missing: '프롬프트 누락', model_behavior: '모델 동작', judge_dispute: 'Judge 이견' };
+function bucketKo(v) { return BUCKET_KO[v] || v; }
 
 function esc(str) {
   return String(str)
