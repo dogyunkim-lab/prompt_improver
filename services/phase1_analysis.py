@@ -244,13 +244,18 @@ async def run_phase1(run_id: int) -> AsyncGenerator[str, None]:
                 error_pattern = result.get("error_pattern", "")
                 improvement_suggestion = result.get("improvement_suggestion", "")
 
+                # Reference 스타일 분석 필드
+                reference_criteria = result.get("reference_criteria", "")
+                style_gap = result.get("style_gap", "")
+
                 # ── DB 저장 (확장 필드 포함) ──
                 await db.execute(
                     """UPDATE case_results
                        SET bucket=?, analysis_summary=?, stt_uncertain=?,
                            hallucination_detected=?, judge_agreement=?, judge_disagreement=?,
                            missing_instruction=?, violated_instruction=?,
-                           error_pattern=?, improvement_suggestion=?
+                           error_pattern=?, improvement_suggestion=?,
+                           reference_criteria=?, style_gap=?
                        WHERE run_id=? AND case_id=?""",
                     (result.get("bucket", ""),
                      result.get("analysis_summary", ""),
@@ -262,6 +267,8 @@ async def run_phase1(run_id: int) -> AsyncGenerator[str, None]:
                      violated_instruction,
                      error_pattern,
                      improvement_suggestion,
+                     reference_criteria,
+                     style_gap,
                      run_id, str(case.get("id", "")))
                 )
 
@@ -386,6 +393,9 @@ async def _summarize_all(case_analyses: list, n: int) -> dict:
     judge_dispute_list = []
     error_pattern_groups = {}  # 오류 패턴별 그룹핑
 
+    reference_criteria_samples = []
+    style_gap_samples = []
+
     for a in case_analyses:
         b = a.get("bucket", "")
         if b in bucket_counts:
@@ -400,6 +410,14 @@ async def _summarize_all(case_analyses: list, n: int) -> dict:
         if ep:
             error_pattern_groups.setdefault(ep, []).append(a.get("case_id", ""))
 
+        # Reference 스타일 분석 수집
+        rc = a.get("reference_criteria", "")
+        if rc:
+            reference_criteria_samples.append(rc)
+        sg = a.get("style_gap", "")
+        if sg:
+            style_gap_samples.append(sg)
+
         # 프롬프트로 개선 가능한 케이스 (prompt_missing / model_behavior)
         if b in ("prompt_missing", "model_behavior"):
             prompt_improvable.append({
@@ -413,6 +431,8 @@ async def _summarize_all(case_analyses: list, n: int) -> dict:
                 "violated_instruction": a.get("violated_instruction", ""),
                 "error_pattern": ep,
                 "improvement_suggestion": a.get("improvement_suggestion", ""),
+                "reference_criteria": a.get("reference_criteria", ""),
+                "style_gap": a.get("style_gap", ""),
                 # Phase 2에서 구체적 예시로 활용할 원문 텍스트
                 "stt": a.get("_stt", ""),
                 "reference": a.get("_reference", ""),
@@ -443,23 +463,40 @@ async def _summarize_all(case_analyses: list, n: int) -> dict:
         analyses_for_gpt.append(filtered)
 
     analyses_text = json.dumps(analyses_for_gpt, ensure_ascii=False, indent=2)
+
+    # Reference 스타일 샘플 텍스트 (GPT에 전달용, 최대 15개)
+    ref_criteria_text = "\n".join(f"- {s}" for s in reference_criteria_samples[:15]) if reference_criteria_samples else "(없음)"
+    style_gap_text = "\n".join(f"- {s}" for s in style_gap_samples[:15]) if style_gap_samples else "(없음)"
+
     prompt = f"""아래는 오답/과답 케이스 {n}개의 분석 데이터다.
 이를 바탕으로 다음 JSON만 출력하라 (설명 없이 JSON만):
 {{
   "top_issues": ["가장 자주 발생하는 오류 유형 설명 1", "설명 2", "설명 3"],
-  "recommended_focus": "Phase 2 프롬프트 개선 시 가장 중요하게 다뤄야 할 방향. 구체적인 프롬프트 수정 방향을 포함하여 4~6문장으로 작성하라."
+  "recommended_focus": "Phase 2 프롬프트 개선 시 가장 중요하게 다뤄야 할 방향. 구체적인 프롬프트 수정 방향을 포함하여 4~6문장으로 작성하라.",
+  "reference_style_profile": "아래 [케이스별 Reference 요약 기준]을 종합하여, 상담사들이 공통으로 적용하는 요약 스타일·기준·구조를 5~8문장으로 정리하라. 어떤 정보를 포함/생략하는지, 어떤 구조·순서·상세도를 사용하는지, LLM이 이 스타일을 재현하려면 프롬프트에 어떤 지시가 필요한지를 포함하라.",
+  "common_style_gaps": "아래 [스타일 차이 목록]을 종합하여, Generated가 Reference 스타일에서 가장 자주 벗어나는 패턴 3~5가지를 나열하라."
 }}
 
-분석 데이터:
+[케이스별 Reference 요약 기준]
+{ref_criteria_text}
+
+[스타일 차이 목록]
+{style_gap_text}
+
+[분석 데이터]
 {analyses_text}"""
 
     top_issues = []
     recommended_focus = ""
+    reference_style_profile = ""
+    common_style_gaps = ""
     try:
         raw = await call_gpt([{"role": "user", "content": prompt}], reasoning="high")
         gpt = _extract_json(raw)
         top_issues = gpt.get("top_issues", [])
         recommended_focus = gpt.get("recommended_focus", "")
+        reference_style_profile = gpt.get("reference_style_profile", "")
+        common_style_gaps = gpt.get("common_style_gaps", "")
     except Exception:
         # fallback: analysis_summary에서 대표 텍스트 추출
         top_issues = list({
@@ -476,6 +513,8 @@ async def _summarize_all(case_analyses: list, n: int) -> dict:
         "prompt_improvable_cases": prompt_improvable,
         "judge_dispute_cases": judge_dispute_list,
         "recommended_focus": recommended_focus,
+        "reference_style_profile": reference_style_profile,
+        "common_style_gaps": common_style_gaps,
     }
 
 

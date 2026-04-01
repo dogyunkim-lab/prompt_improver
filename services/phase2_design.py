@@ -185,6 +185,15 @@ def _build_strategy_input(
     if user_guide:
         user_guide_section = f"[사용자 전략 가이드 — 반드시 준수]\n{user_guide}"
 
+    # Reference 스타일 프로파일 (Phase 1에서 분석된 상담사 요약 기준)
+    ref_style = phase1_summary.get("reference_style_profile", "")
+    common_gaps = phase1_summary.get("common_style_gaps", "")
+    reference_style_section = ""
+    if ref_style:
+        reference_style_section = f"[Reference 요약 스타일 프로파일 — 반드시 반영]\n{ref_style}"
+        if common_gaps:
+            reference_style_section += f"\n\n[Generated의 빈번한 스타일 이탈 패턴]\n{common_gaps}"
+
     return template.format(
         generation_task=task.get("generation_task", "불편사항 요약"),
         bucket_counts=json.dumps(bucket_counts, ensure_ascii=False),
@@ -199,6 +208,7 @@ def _build_strategy_input(
         converge_context=converge_context,
         prev_run_feedback=prev_run_feedback,
         user_guide=user_guide_section,
+        reference_style=reference_style_section,
     )
 
 
@@ -267,14 +277,16 @@ def _format_cases_text(cases: list) -> str:
         ref = (c.get("reference") or "")[:300]
         gen = (c.get("generated") or "")[:300]
         lines.append(f"--- 케이스 {i} (ID: {c['case_id']}) ---")
+        lines.append(f"Reference 요약 기준: {c.get('reference_criteria', 'N/A')}")
+        lines.append(f"스타일 차이: {c.get('style_gap', 'N/A')}")
         lines.append(f"오류 패턴: {c.get('error_pattern', 'N/A')}")
         lines.append(f"분석: {c.get('analysis_summary', 'N/A')}")
         lines.append(f"누락 지시: {c.get('missing_instruction', 'N/A')}")
         lines.append(f"위반 지시: {c.get('violated_instruction', 'N/A')}")
         lines.append(f"개선 제안: {c.get('improvement_suggestion', 'N/A')}")
         lines.append(f"STT: {stt}")
-        lines.append(f"정답: {ref}")
-        lines.append(f"생성: {gen}")
+        lines.append(f"정답(Reference): {ref}")
+        lines.append(f"생성(Generated): {gen}")
         lines.append("")
     return "\n".join(lines) if lines else "(대표 케이스 없음)"
 
@@ -283,7 +295,8 @@ async def _generate_single_candidate(
     strategy_candidate: dict, design_summary: str,
     task: dict, improvable_cases: list,
     max_retries: int = 1,
-    user_guide: str = ""
+    user_guide: str = "",
+    reference_style_profile: str = ""
 ) -> dict | None:
     """Step 2: 개별 후보의 노드 프롬프트 생성. 실패 시 재시도."""
     label = strategy_candidate["label"]
@@ -298,6 +311,10 @@ async def _generate_single_candidate(
     if user_guide:
         user_guide_section = f"\n[사용자 전략 가이드 — 반드시 준수]\n{user_guide}\n"
 
+    reference_style_section = ""
+    if reference_style_profile:
+        reference_style_section = f"\n[Reference 요약 스타일 — 이 스타일을 재현하는 프롬프트를 작성하라]\n{reference_style_profile}\n"
+
     template = _load_prompt(CANDIDATE_PROMPT_PATH)
     prompt = template.format(
         generation_task=task.get("generation_task", "불편사항 요약"),
@@ -310,6 +327,7 @@ async def _generate_single_candidate(
         design_summary=design_summary,
         representative_cases=cases_text,
         user_guide=user_guide_section,
+        reference_style=reference_style_section,
     )
 
     for attempt in range(max_retries + 1):
@@ -508,6 +526,11 @@ async def run_phase2(run_id: int) -> AsyncGenerator[str, None]:
         if user_guide:
             yield log_event("info", f"사용자 전략 가이드 반영: {user_guide[:80]}{'...' if len(user_guide) > 80 else ''}")
 
+        # Reference 스타일 프로파일
+        reference_style_profile = phase1_summary.get("reference_style_profile", "")
+        if reference_style_profile:
+            yield log_event("info", f"Reference 스타일 프로파일 로드됨 ({len(reference_style_profile)}자)")
+
         yield log_event("info", f"Design mode: {design_mode}, Learning rate: {learning_rate}")
 
         # ════════════════════════════════════════════════════════════════════
@@ -545,7 +568,8 @@ async def run_phase2(run_id: int) -> AsyncGenerator[str, None]:
 
         generation_tasks = [
             _generate_single_candidate(sc, design_summary, task, improvable_cases,
-                                       user_guide=user_guide)
+                                       user_guide=user_guide,
+                                       reference_style_profile=reference_style_profile)
             for sc in strategy_candidates
         ]
         generation_results = await asyncio.gather(*generation_tasks, return_exceptions=True)
