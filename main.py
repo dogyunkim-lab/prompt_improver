@@ -33,6 +33,8 @@ app.include_router(tasks.router)
 app.include_router(runs.router)
 app.include_router(phases.router)
 
+app.mount("/static", StaticFiles(directory="frontend/static"), name="static")
+
 
 @app.get("/")
 async def serve_index():

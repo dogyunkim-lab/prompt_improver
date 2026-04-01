@@ -21,14 +21,59 @@ def _load_prompt(path: str) -> str:
 
 
 def _extract_json(text: str) -> dict:
+    """실제 Judge와 동일: re.search(r'\\{[^{}]*\\}') 로 단일 레벨 JSON 추출."""
+    import re
     try:
-        start = text.find("{")
-        end = text.rfind("}") + 1
-        if start >= 0 and end > start:
-            return json.loads(text[start:end])
+        json_match = re.search(r'\{[^{}]*\}', text)
+        if json_match:
+            return json.loads(json_match.group(0))
     except Exception:
         pass
     return {}
+
+
+def _classify_from_text(raw_text: str) -> tuple:
+    """텍스트에서 정답/과답/오답 분류 — 실제 Judge evaluate_answer 폴백 로직 그대로 재현."""
+    result = raw_text if isinstance(raw_text, str) else ""
+    result_lower = result.lower()
+
+    # 1순위: 결론 상반 감지 (가장 중요!)
+    has_opposite = False
+    if "불기" in result and "가능" in result:
+        if "reference" in result_lower and "generated" in result_lower:
+            has_opposite = True
+        elif ("가능" in result and "•" in result) or \
+             ("opposite" in result_lower) or ("contradict" in result_lower):
+            has_opposite = True
+
+    if has_opposite or "opposite conclusion" in result_lower or "결론 상반" in result:
+        return "오답", "결론 상반"
+
+    # 2순위: 명시적 평가 키워드 (한국어)
+    if "오답" in result and "정답" not in result:
+        return "오답", "정보 불일치"
+    if "과답" in result and "정답" not in result:
+        return "과답", "추가 정보 포함"
+    if "누락" in result and "정답" not in result:
+        return "오답", "정보 누락"
+    if "정답" in result and "오답" not in result and "누락" not in result:
+        return "정답", "동일 정보"
+
+    # 3순위: 영어 키워드 - 부정적 키워드 먼저 체크
+    if "wrong" in result_lower or "incorrect" in result_lower:
+        return "오답", "정보 불일치"
+    if "missing" in result_lower or "lacks" in result_lower or "does not mention" in result_lower:
+        return "오답", "정보 누락"
+    if "extra" in result_lower or "additional" in result_lower or "unnecessary" in result_lower:
+        return "과답", "추가 정보 포함"
+
+    # 4순위: 긍정적 키워드 (가장 마지막)
+    if ("same" in result_lower or "matches" in result_lower or "identical" in result_lower) and \
+            "not" not in result_lower[:50]:
+        return "정답", "동일 정보"
+
+    # 폴백: 평가실패 유지 (실제 Judge와 동일)
+    return "평가실패", "평가 불기"
 
 
 async def run_phase4(run_id: int) -> AsyncGenerator[str, None]:
@@ -88,8 +133,16 @@ async def run_phase4(run_id: int) -> AsyncGenerator[str, None]:
                 try:
                     raw = await call_gpt(messages, reasoning="low")
                     result = _extract_json(raw)
-                    evaluation = result.get("rating", result.get("evaluation", "오답"))
+                    # 실제 Judge와 동일: JSON에서 "rating" 키로 추출
+                    evaluation = result.get("rating", "평가실패")
                     reason = result.get("reason", "")
+
+                    # JSON 파싱 실패 시 텍스트에서 추출 (실제 Judge 동일 로직)
+                    if evaluation == "평가실패":
+                        fb_eval, fb_reason = _classify_from_text(raw)
+                        evaluation = fb_eval
+                        reason = fb_reason
+
                     await db.execute(
                         "UPDATE case_results SET evaluation=?, reason=? WHERE run_id=? AND case_id=?",
                         (evaluation, reason, run_id, case["case_id"])

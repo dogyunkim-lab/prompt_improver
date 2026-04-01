@@ -42,9 +42,42 @@ async def create_run(task_id: int, body: RunCreate):
             row = await cursor.fetchone()
             run_number = row["next_num"]
 
+        # continue 모드: 이전 Run의 Phase 4 결과를 Judge JSON 형식으로 생성
+        judge_file_path = None
+        if body.start_mode == 'continue' and body.base_run_id:
+            async with db.execute(
+                """SELECT case_id, generation_task, stt, reference, keywords,
+                          generated, evaluation, reason
+                   FROM case_results WHERE run_id=? ORDER BY rowid""",
+                (body.base_run_id,)
+            ) as cursor:
+                base_cases = [dict(row) for row in await cursor.fetchall()]
+
+            if base_cases:
+                # 실제 Judge process_single_case 출력 형식으로 변환
+                judge_json = [
+                    {
+                        "id": c["case_id"],
+                        "generation_task": c["generation_task"] or "",
+                        "stt": c["stt"] or "",
+                        "reference": c["reference"] or "",
+                        "keywords": c["keywords"] or "",
+                        "generated": c["generated"] or "",
+                        "reasoning_effort": "",
+                        "reasoning_effort_result": "",
+                        "answer_evaluation": c["evaluation"] or "",
+                        "answer_evaluation_reason": c["reason"] or "",
+                    }
+                    for c in base_cases
+                ]
+                os.makedirs("data/uploads", exist_ok=True)
+                judge_file_path = f"data/uploads/run_{run_number}_from_run_{body.base_run_id}_judge.json"
+                with open(judge_file_path, "w", encoding="utf-8") as f:
+                    json.dump(judge_json, f, ensure_ascii=False, indent=2)
+
         async with db.execute(
-            "INSERT INTO runs (task_id, run_number, start_mode, base_run_id, status) VALUES (?,?,?,?,?)",
-            (task_id, run_number, body.start_mode, body.base_run_id, "created")
+            "INSERT INTO runs (task_id, run_number, start_mode, base_run_id, status, judge_file_path) VALUES (?,?,?,?,?,?)",
+            (task_id, run_number, body.start_mode, body.base_run_id, "created", judge_file_path)
         ) as cursor:
             run_id = cursor.lastrowid
         await db.commit()

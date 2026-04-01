@@ -18,7 +18,7 @@ def load_prompt() -> str:
 
 def _detect_eval_field(cases: list) -> str:
     """JSON 케이스에서 오답/정답/과답 값이 들어있는 필드명 자동 감지."""
-    eval_values = {"오답", "과답", "정답"}
+    eval_values = {"오답", "과답", "정답", "평가실패"}
     for field in ("evaluation", "answer_evaluation", "judge_result", "judge", "result"):
         if any(str(c.get(field, "")) in eval_values for c in cases[:20]):
             return field
@@ -32,7 +32,7 @@ def _detect_eval_field(cases: list) -> str:
 
 def _detect_reason_field(cases: list) -> str:
     """Judge reason/explanation 필드명 자동 감지."""
-    for field in ("reason", "judge_reason", "evaluation_reason", "rationale", "explanation", "comment"):
+    for field in ("reason", "answer_evaluation_reason", "judge_reason", "evaluation_reason", "rationale", "explanation", "comment"):
         if any(isinstance(c.get(field), str) and c.get(field, "").strip() for c in cases[:10]):
             return field
     return "reason"

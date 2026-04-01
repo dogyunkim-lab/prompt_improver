@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Prompt Improver</title>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script src="/static/chart.umd.min.js"></script>
 <style>
 /* ── Reset & Base ── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -90,6 +90,9 @@ h1, h2, h3, h4 { font-weight: 600; }
 .run-row:hover .run-delete-btn { display: flex; }
 
 .run-meta { font-size: 10px; color: #6c7086; margin-top: 2px; }
+.run-chain-marker { font-size: 10px; color: #89b4fa; margin-right: 2px; }
+.run-row.chain { border-left: 2px solid #89b4fa; margin-left: 0; }
+.run-chain-gap { height: 6px; border-left: 2px solid transparent; margin-left: 0; }
 
 .sidebar-search {
   margin: 8px 12px 4px; padding: 6px 10px; background: #313244; color: #cdd6f4;
@@ -670,6 +673,10 @@ h1, h2, h3, h4 { font-weight: 600; }
 
         <!-- ──────── PHASE 2 ──────── -->
         <div class="phase-panel" id="panel-2">
+          <div id="p2-feedback-section" class="hidden" style="margin-bottom:16px;padding:14px 18px;background:#f0f7ff;border:1px solid #b6d4fe;border-radius:10px;">
+            <h4 style="font-size:12px;color:#1e40af;margin-bottom:8px;">이전 Run Phase 6 피드백 (자동 주입됨)</h4>
+            <div id="p2-feedback-content" style="font-size:13px;color:#333;line-height:1.7;white-space:pre-wrap;"></div>
+          </div>
           <div class="candidate-cards" id="p2-candidate-cards">
             <div class="text-muted">Phase 2 실행 후 결과가 표시됩니다.</div>
           </div>
@@ -1115,15 +1122,28 @@ function renderTaskList() {
         runList.appendChild(collapseRow);
       }
 
-      runsToShow.forEach(run => {
+      // Run 체인 그룹핑: base_run_id가 있으면 continue chain
+      runsToShow.forEach((run, idx) => {
         const isRunActive = run.id == state.selectedRunId;
+        const isChain = !!run.base_run_id;
+        // 이 Run을 base로 하는 다음 Run이 있는지 확인 (chain 시작점)
+        const isChainStart = !isChain && allRuns.some(r => r.base_run_id === run.id);
+
+        // chain 시작 전 구분선
+        if (idx > 0 && !isChain && runsToShow[idx-1].base_run_id) {
+          const gap = document.createElement('div');
+          gap.className = 'run-chain-gap';
+          runList.appendChild(gap);
+        }
+
         const rr = document.createElement('div');
-        rr.className = 'run-row' + (isRunActive ? ' active' : '');
+        rr.className = 'run-row' + (isRunActive ? ' active' : '') + ((isChain || isChainStart) ? ' chain' : '');
         const badge = getRunBadge(run);
         const dateLabel = run.created_at ? fmtDate(run.created_at) : '';
+        const chainLabel = isChain ? '<span class="run-chain-marker">↳</span>' : '';
         rr.innerHTML = `
           <div>
-            <span class="run-label">Run ${run.run_number}</span>
+            <span class="run-label">${chainLabel}Run ${run.run_number}</span>
             ${dateLabel ? `<div class="run-meta">${dateLabel}</div>` : ''}
           </div>
           <span class="run-badge ${badge.cls}">${badge.text}</span>
@@ -1348,10 +1368,58 @@ function populateRunData() {
   if (!state.runData) return;
   const phases = state.runData.phases || {};
 
+  // ── Run 전환 시 전체 UI 초기화 ──
+  // Phase 1 초기화
+  document.getElementById('p1-file-name').textContent = '';
+  document.getElementById('p1-upload-status').textContent = '';
+  document.getElementById('p1-prompt-name').textContent = '';
+  document.getElementById('p1-prompt-status').textContent = '';
+  ['p1-sc1','p1-sc2','p1-sc3','p1-sc4'].forEach(id => {
+    const el = document.getElementById(id); if (el) el.textContent = '—';
+  });
+  state.p1Cases = [];
+  state.p1EvalChartData = null;
+  state.p1BucketChartData = null;
+  if (state.p1EvalChart) { state.p1EvalChart.destroy(); state.p1EvalChart = null; }
+  if (state.p1BucketChart) { state.p1BucketChart.destroy(); state.p1BucketChart = null; }
+  document.getElementById('p1-table-body').innerHTML = '<tr><td colspan="9" style="text-align:center;color:#aaa;padding:20px;">데이터 없음</td></tr>';
+  // Phase 2 초기화
+  const p2Summary = document.getElementById('p2-design-summary');
+  if (p2Summary) p2Summary.textContent = '';
+  // Phase 4 초기화
+  ['p4-sc1','p4-sc2','p4-sc3','p4-sc4'].forEach(id => {
+    const el = document.getElementById(id); if (el) el.textContent = '—';
+  });
+  // Phase 5 초기화
+  ['p5-sc1','p5-sc2','p5-sc3','p5-sc4'].forEach(id => {
+    const el = document.getElementById(id); if (el) el.textContent = '—';
+  });
+  ['p5-improve','p5-regress','p5-same'].forEach(id => {
+    const el = document.getElementById(id); if (el) el.textContent = '—';
+  });
+  document.getElementById('p5-goal-banner').classList.add('hidden');
+  if (state.p5TrendChart) { state.p5TrendChart.destroy(); state.p5TrendChart = null; }
+  document.getElementById('p5-trend-notice').classList.add('hidden');
+  document.getElementById('p5-regress-tbody').innerHTML = '<tr><td colspan="3" style="text-align:center;color:#aaa;padding:20px;">데이터 없음</td></tr>';
+  document.getElementById('p5-cases-tbody').innerHTML = '<tr><td colspan="6" style="text-align:center;color:#aaa;padding:20px;">데이터 없음</td></tr>';
+  // Phase 6 초기화
+  document.getElementById('p6-lr-badge').textContent = 'Learning Rate: —';
+  document.getElementById('p6-backprop-text').textContent = 'Phase 6 실행 후 표시됩니다.';
+  document.getElementById('p6-effective-tags').innerHTML = '<span class="text-muted">없음</span>';
+  document.getElementById('p6-harmful-tags').innerHTML = '<span class="text-muted">없음</span>';
+  document.getElementById('p6-next-direction').value = '';
+  // 로그 초기화
+  ['p1-log','p2-log','p3-log','p4-log','p6-log'].forEach(id => {
+    const el = document.getElementById(id); if (el) el.innerHTML = '';
+  });
+  // Phase 2 피드백 섹션 초기화
+  const fbSection = document.getElementById('p2-feedback-section');
+  if (fbSection) fbSection.classList.add('hidden');
+
   // Continue 모드 배너 (Phase 1)
   const contBanner = document.getElementById('p1-continue-banner');
   if (state.runData.base_run_id) {
-    contBanner.textContent = `이전 Run #${state.runData.base_run_id} 기반 — Phase 6 피드백이 Phase 2에 자동 반영됩니다.`;
+    contBanner.textContent = `이전 Run #${state.runData.base_run_id} 기반 — Judge JSON이 Phase 4 결과에서 자동 생성되었고, Phase 6 피드백이 Phase 2에 자동 반영됩니다.`;
     contBanner.classList.remove('hidden');
   } else {
     contBanner.classList.add('hidden');
@@ -1362,6 +1430,13 @@ function populateRunData() {
 
   // Phase 1
   const p1 = phases[1] || {};
+  // Judge 파일 업로드 상태 복원 (continue 모드: Phase 4 결과 기반 자동 생성)
+  if (state.runData && state.runData.judge_file_path) {
+    const fname = state.runData.judge_file_path.split('/').pop();
+    document.getElementById('p1-file-name').textContent = fname;
+    const isGenerated = state.runData.base_run_id && !p1.status;
+    document.getElementById('p1-upload-status').textContent = isGenerated ? '이전 Run Phase 4 결과에서 자동 생성됨' : '업로드 완료';
+  }
   // 프롬프트 파일 업로드 상태 복원
   if (state.runData && state.runData.prompt_file_path) {
     document.getElementById('p1-prompt-status').textContent = '업로드 완료';
@@ -1387,6 +1462,10 @@ function populateRunData() {
   state.selectedCandidateId = (rd && rd.selected_candidate_id) ? rd.selected_candidate_id : null;
   if (p2.candidates) renderP2Candidates(p2.candidates);
   if (p2.design_summary) document.getElementById('p2-design-summary').textContent = p2.design_summary;
+  if (p2.prev_run_feedback) {
+    document.getElementById('p2-feedback-content').textContent = p2.prev_run_feedback;
+    document.getElementById('p2-feedback-section').classList.remove('hidden');
+  }
   if (p2.logs) replayLogs('p2-log', p2.logs);
 
   // Phase 3
@@ -2382,6 +2461,10 @@ function handlePhaseResult(num, data) {
         document.getElementById('btn-p3-execute').disabled = true;
       }
       if (data.design_summary) document.getElementById('p2-design-summary').textContent = data.design_summary;
+      if (data.prev_run_feedback) {
+        document.getElementById('p2-feedback-content').textContent = data.prev_run_feedback;
+        document.getElementById('p2-feedback-section').classList.remove('hidden');
+      }
       break;
     case 3:
       // Phase 3 완료 - Dify 실행 결과는 로그로 표시됨

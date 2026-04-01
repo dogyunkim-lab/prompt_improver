@@ -21,7 +21,7 @@ async def list_tasks():
             tasks = [dict(row) for row in await cursor.fetchall()]
         for task in tasks:
             async with db.execute(
-                "SELECT id, run_number, status, score_total, start_mode, created_at FROM runs WHERE task_id=? ORDER BY run_number",
+                "SELECT id, run_number, status, score_total, start_mode, base_run_id, created_at FROM runs WHERE task_id=? ORDER BY run_number",
                 (task["id"],)
             ) as cursor:
                 task["runs"] = [dict(row) for row in await cursor.fetchall()]

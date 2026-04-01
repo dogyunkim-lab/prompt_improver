@@ -612,6 +612,7 @@ async def run_phase2(run_id: int) -> AsyncGenerator[str, None]:
             "candidate_count": len(final_candidates),
             "design_summary": design_summary,
             "candidates": candidates_with_nodes,
+            "prev_run_feedback": prev_run_feedback if prev_run_feedback else None,
         }
 
         async with db.execute(
