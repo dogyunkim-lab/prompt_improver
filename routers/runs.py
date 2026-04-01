@@ -138,6 +138,60 @@ async def get_run(run_id: int):
             if not phases[2].get("candidates"):
                 phases[2]["candidates"] = candidates_with_nodes
 
+        # Phase 1 케이스 결과 포함 (페이지 새로고침 시 테이블 복원)
+        if 1 in phases:
+            try:
+                async with db.execute(
+                    """SELECT case_id, stt, reference, generated, evaluation, reason,
+                              bucket, analysis_summary, stt_uncertain,
+                              hallucination_detected, judge_agreement, judge_disagreement
+                       FROM case_results WHERE run_id=? ORDER BY rowid""",
+                    (run_id,)
+                ) as cursor:
+                    case_rows = [dict(row) for row in await cursor.fetchall()]
+                if case_rows:
+                    phases[1]["cases"] = [{
+                        "id": r["case_id"],
+                        "judge": r["evaluation"] or "",
+                        "bucket": r["bucket"] or "",
+                        "analysis_summary": r["analysis_summary"] or "",
+                        "stt_uncertain": r["stt_uncertain"] or "",
+                        "stt": r["stt"] or "",
+                        "reference": r["reference"] or "",
+                        "generated": r["generated"] or "",
+                        "judge_disagreement": (r.get("judge_disagreement") or r["reason"] or ""),
+                        "hallucination": bool(r.get("hallucination_detected", 0)),
+                    } for r in case_rows]
+                    # eval_chart fallback: DB에 저장 안 된 구 데이터 호환
+                    if not phases[1].get("eval_chart") and case_rows:
+                        correct_n = sum(1 for r in case_rows if r["evaluation"] == "정답")
+                        over_n    = sum(1 for r in case_rows if r["evaluation"] == "과답")
+                        wrong_n   = sum(1 for r in case_rows if r["evaluation"] == "오답")
+                        phases[1]["eval_chart"] = {
+                            "labels": ["정답", "과답", "오답"],
+                            "values": [correct_n, over_n, wrong_n],
+                        }
+                    # bucket_chart fallback
+                    if not phases[1].get("bucket_chart") and case_rows:
+                        bc = {"stt_error": 0, "prompt_missing": 0, "model_behavior": 0, "judge_dispute": 0}
+                        for r in case_rows:
+                            b = r["bucket"] or ""
+                            if b in bc:
+                                bc[b] += 1
+                        phases[1]["bucket_chart"] = {
+                            "labels": ["STT 오류", "프롬프트 누락", "모델 동작", "Judge 이견"],
+                            "values": [bc["stt_error"], bc["prompt_missing"], bc["model_behavior"], bc["judge_dispute"]],
+                        }
+            except Exception:
+                pass  # 마이그레이션 전 구 DB 호환
+
+        # Dify connections 포함 (Phase 3 복원용)
+        async with db.execute(
+            "SELECT * FROM dify_connections WHERE run_id=? ORDER BY id",
+            (run_id,)
+        ) as cursor:
+            run["dify_connections"] = [dict(row) for row in await cursor.fetchall()]
+
         run["phases"] = phases
         return run
     finally:

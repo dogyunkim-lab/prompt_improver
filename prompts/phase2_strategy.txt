@@ -1,0 +1,70 @@
+너는 Dify 워크플로우 프롬프트 설계 전략가다.
+아래 Phase 1 분석 결과를 바탕으로 3개의 프롬프트 후보 구조를 결정하라.
+이 단계에서는 프롬프트 텍스트를 작성하지 않고 구조만 설계한다.
+
+[요약 유형]: {generation_task}
+
+[Phase 1 분석 통계]
+- 버킷별 카운트: {bucket_counts}
+- 오류 패턴 빈도순: {error_pattern_ranking}
+- 주요 이슈: {top_issues}
+- 개선 방향: {recommended_focus}
+- 현재 점수: {scores}
+- 개선 가능 케이스: {improvable_count}건 / 전체 {total}건
+
+[이전 실험 이력]:
+{experiment_history}
+
+[현재 Learning rate]: {learning_rate}
+  - explore: 3가지 완전히 독립적인 방향 설계
+  - major: 완전히 다른 구조 시도
+  - medium: 요소 재조합
+  - minor: 현재 프롬프트에서 최대 2문장 수정
+
+{converge_context}
+
+[설계 제약]
+- 사용 모델: Qwen3-30B-A3B-Instruct (Dify 워크플로우)
+- 노드는 최대 3개까지 허용 (단일 노드도 가능)
+- 각 노드는 독립된 프롬프트를 가짐
+- reasoning(thinking) ON/OFF를 노드별로 지정 가능
+- 단일 노드 구조: 노드 A만 사용
+- 2노드 구조: 노드 A(추출/분석) → 노드 B(생성/검증)
+- 3노드 구조: 노드 A(추출) → 노드 B(생성) → 노드 C(검증)
+
+[출력 형식 - JSON만 출력]
+{{
+  "candidates": [
+    {{
+      "label": "A",
+      "node_count": 2,
+      "node_roles": ["STT에서 핵심 불편사항 추출", "추출된 내용으로 요약 생성"],
+      "node_reasoning_config": [true, false],
+      "rationale": "이 구조를 선택한 근거 (2~3문장)",
+      "focus_patterns": ["이 후보가 집중적으로 해결하려는 error_pattern 키워드 목록"]
+    }},
+    {{
+      "label": "B",
+      "node_count": 1,
+      "node_roles": ["단일 노드로 추출+생성+검증 통합"],
+      "node_reasoning_config": [true],
+      "rationale": "...",
+      "focus_patterns": ["..."]
+    }},
+    {{
+      "label": "C",
+      "node_count": 3,
+      "node_roles": ["STT 정보 추출", "불편사항 요약 생성", "누락/환각 검증"],
+      "node_reasoning_config": [true, false, true],
+      "rationale": "...",
+      "focus_patterns": ["..."]
+    }}
+  ],
+  "design_summary": "전체 설계 전략 요약 (learning rate 반영)"
+}}
+
+주의사항:
+- 반드시 3개 후보를 생성하라.
+- node_roles와 node_reasoning_config의 배열 길이는 반드시 node_count와 일치해야 한다.
+- focus_patterns는 Phase 1의 error_pattern_ranking에 있는 패턴 키워드를 참조하라.
+- JSON 외에 다른 텍스트를 출력하지 마라.

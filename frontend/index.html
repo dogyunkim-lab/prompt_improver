@@ -242,6 +242,25 @@ h1, h2, h3, h4 { font-weight: 600; }
   box-shadow: 0 1px 4px rgba(0,0,0,0.07); border: 2px solid transparent;
 }
 .candidate-card.final { border-color: #cba6f7; }
+.candidate-card.selected { border-color: #cba6f7; background: #f5f0ff; }
+.candidate-card .btn-select-candidate {
+  margin-top: 10px; padding: 6px 14px; background: #cba6f7; color: #1e1e2e;
+  border-radius: 6px; font-weight: 600; font-size: 12px; width: 100%;
+}
+.candidate-card .btn-select-candidate:hover { opacity: 0.85; }
+.candidate-card.selected .btn-select-candidate { background: #a6e3a1; }
+.p3-step-preview { margin: 8px 0; }
+.p3-step-toggle {
+  cursor: pointer; font-size: 12px; font-weight: 600; color: #cba6f7;
+  padding: 4px 0; user-select: none;
+}
+.p3-step-toggle:hover { text-decoration: underline; }
+.p3-step-body {
+  display: none; font-size: 12px; color: #555; line-height: 1.6;
+  padding: 8px 12px; background: #fafaf8; border-radius: 6px; margin-top: 4px;
+  white-space: pre-wrap; word-break: break-word;
+}
+.p3-step-body.open { display: block; }
 .candidate-card .cc-label { font-size: 12px; font-weight: 700; color: #cba6f7; margin-bottom: 8px; }
 .candidate-card .cc-nodes { font-size: 11px; color: #888; margin-bottom: 8px; }
 .candidate-card .cc-rationale { font-size: 12px; color: #555; margin-bottom: 12px; line-height: 1.5; }
@@ -333,6 +352,8 @@ h1, h2, h3, h4 { font-weight: 600; }
   background: #fff; color: #333; font-size: 11px;
 }
 .col-filter:focus { border-color: #cba6f7; outline: none; }
+.cell-wrap { max-width: 220px; white-space: pre-wrap; word-break: break-all; font-size: 12px; line-height: 1.5; }
+.halluc-tag { background: #f38ba8; color: #1e1e2e; padding: 1px 5px; border-radius: 3px; font-size: 10px; font-weight: 700; margin-left: 4px; vertical-align: middle; }
 
 /* ── Section card ── */
 .section-card {
@@ -505,8 +526,42 @@ h1, h2, h3, h4 { font-weight: 600; }
           </div>
 
           <div class="chart-container">
-            <h4>버킷 분포 (판정 결과)</h4>
-            <div class="chart-wrap"><canvas id="p1-bucket-chart"></canvas></div>
+            <h4>판정 분포</h4>
+            <div style="display:flex;gap:20px;flex-wrap:wrap;">
+              <div style="flex:1;min-width:200px;">
+                <div class="chart-wrap"><canvas id="p1-eval-chart"></canvas></div>
+              </div>
+              <div style="flex:1;min-width:200px;" id="p1-bucket-chart-wrap">
+                <h4 style="font-size:12px;color:#888;margin-bottom:8px;">오류 원인 분류 (오답/과답 케이스)</h4>
+                <div class="chart-wrap"><canvas id="p1-bucket-chart"></canvas></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="section-card" id="p1-bucket-legend">
+            <h4>버킷 설명</h4>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;font-size:12px;line-height:1.6;">
+              <div>
+                <span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#f38ba8;margin-right:6px;vertical-align:middle;"></span>
+                <strong>STT 오류</strong><br>
+                <span style="color:#666;margin-left:16px;">음성인식(STT) 자체의 오류로 인한 잘못된 입력. 프롬프트 개선으로 해결 불가능한 영역.</span>
+              </div>
+              <div>
+                <span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#f9e2af;margin-right:6px;vertical-align:middle;"></span>
+                <strong>프롬프트 누락</strong><br>
+                <span style="color:#666;margin-left:16px;">프롬프트에 필요한 지시사항이 빠져있거나 불명확하여 발생한 오류. 프롬프트 개선으로 해결 가능.</span>
+              </div>
+              <div>
+                <span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#89b4fa;margin-right:6px;vertical-align:middle;"></span>
+                <strong>모델 동작</strong><br>
+                <span style="color:#666;margin-left:16px;">프롬프트는 적절하나 모델이 지시를 따르지 못한 경우. 추론 모드 또는 모델 변경 검토 필요.</span>
+              </div>
+              <div>
+                <span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#cba6f7;margin-right:6px;vertical-align:middle;"></span>
+                <strong>Judge 이견</strong><br>
+                <span style="color:#666;margin-left:16px;">모델 응답은 적절하나 Judge 판정이 잘못된 것으로 의심되는 케이스. Judge 기준 재검토 필요.</span>
+              </div>
+            </div>
           </div>
 
           <div class="table-section">
@@ -518,21 +573,27 @@ h1, h2, h3, h4 { font-weight: 600; }
                     <th class="sortable" data-col="id">ID <span class="sort-icon">↕</span></th>
                     <th class="sortable" data-col="judge">Judge판정 <span class="sort-icon">↕</span></th>
                     <th class="sortable" data-col="bucket">버킷 <span class="sort-icon">↕</span></th>
+                    <th>분석사유</th>
                     <th>STT불확실표현</th>
-                    <th>분석요약</th>
-                    <th>Judge이견여부</th>
+                    <th>STT</th>
+                    <th>Reference</th>
+                    <th>Generated</th>
+                    <th>Judge이견</th>
                   </tr>
                   <tr class="filter-row">
                     <td><input class="col-filter" data-col="id" placeholder="필터..."></td>
                     <td><input class="col-filter" data-col="judge" placeholder="필터..."></td>
                     <td><input class="col-filter" data-col="bucket" placeholder="필터..."></td>
+                    <td><input class="col-filter" data-col="analysis_summary" placeholder="필터..."></td>
                     <td><input class="col-filter" data-col="stt_uncertain" placeholder="필터..."></td>
-                    <td><input class="col-filter" data-col="summary" placeholder="필터..."></td>
+                    <td><input class="col-filter" data-col="stt" placeholder="필터..."></td>
+                    <td><input class="col-filter" data-col="reference" placeholder="필터..."></td>
+                    <td><input class="col-filter" data-col="generated" placeholder="필터..."></td>
                     <td><input class="col-filter" data-col="judge_disagreement" placeholder="필터..."></td>
                   </tr>
                 </thead>
                 <tbody id="p1-table-body">
-                  <tr><td colspan="6" style="text-align:center;color:#aaa;padding:20px;">데이터 없음</td></tr>
+                  <tr><td colspan="9" style="text-align:center;color:#aaa;padding:20px;">데이터 없음</td></tr>
                 </tbody>
               </table>
             </div>
@@ -583,12 +644,16 @@ h1, h2, h3, h4 { font-weight: 600; }
 
         <!-- ──────── PHASE 3 ──────── -->
         <div class="phase-panel" id="panel-3">
-          <div class="spec-summary" id="p3-spec-summary">Phase 2 결과가 여기에 표시됩니다.</div>
+          <!-- 선택된 후보 상세 정보 -->
+          <div class="section-card" id="p3-selected-info">
+            <div class="text-muted">Phase 2에서 후보를 선택하세요.</div>
+          </div>
 
+          <!-- Dify 연결 (단일) -->
           <div class="section-card">
-            <h4>Dify 연결 설정</h4>
-            <div class="dify-cards" id="p3-dify-cards">
-              <div class="text-muted">Phase 2 완료 후 후보가 표시됩니다.</div>
+            <h4>Dify 워크플로우 연결</h4>
+            <div id="p3-dify-single">
+              <div class="text-muted">후보 선택 후 표시됩니다.</div>
             </div>
           </div>
 
@@ -852,6 +917,8 @@ const state = {
   sseConnections: {},   // phase -> EventSource
   phaseStatus: {},      // phase -> 'idle'|'running'|'done'|'failed'
   difyConnections: {},  // candidateId -> boolean
+  selectedCandidateId: null,  // Phase 2에서 선택한 후보 ID
+  p1EvalChart: null,
   p1BucketChart: null,
   p5TrendChart: null,
   submitting: false,
@@ -860,7 +927,7 @@ const state = {
   // Phase 1 테이블 상태
   p1Cases: [],
   p1Sort: { col: null, dir: 1 },
-  p1Filter: { id: '', judge: '', bucket: '', stt_uncertain: '', summary: '', judge_disagreement: '' },
+  p1Filter: { id: '', judge: '', bucket: '', analysis_summary: '', stt_uncertain: '', stt: '', reference: '', generated: '', judge_disagreement: '', hallucination: '' },
 };
 
 // ════════════════════════════════════════════
@@ -1204,20 +1271,43 @@ function populateRunData() {
   // Phase 1
   const p1 = phases[1] || {};
   if (p1.scores) updateP1Scores(p1.scores);
-  if (p1.cases) renderP1Table(p1.cases);
+  if (p1.eval_chart) updateP1EvalChart(p1.eval_chart);
   if (p1.bucket_chart) updateP1BucketChart(p1.bucket_chart);
+  if (p1.cases) renderP1Table(p1.cases);
   if (p1.logs) replayLogs('p1-log', p1.logs);
 
   // Phase 2
   const p2 = phases[2] || {};
+  // 선택된 후보 복원
+  const rd = state.runData;
+  state.selectedCandidateId = (rd && rd.selected_candidate_id) ? rd.selected_candidate_id : null;
   if (p2.candidates) renderP2Candidates(p2.candidates);
   if (p2.design_summary) document.getElementById('p2-design-summary').textContent = p2.design_summary;
   if (p2.logs) replayLogs('p2-log', p2.logs);
 
   // Phase 3
   const p3 = phases[3] || {};
-  if (p2.spec_summary) document.getElementById('p3-spec-summary').textContent = p2.spec_summary;
-  if (p2.candidates) renderP3DifyCards(p2.candidates);
+  if (state.selectedCandidateId && p2.candidates) {
+    const selC = p2.candidates.find(c => c.id == state.selectedCandidateId);
+    if (selC) renderP3ForSelected(selC);
+  }
+  // 기존 verified dify connections 복원
+  if (rd && rd.dify_connections) {
+    rd.dify_connections.forEach(dc => {
+      if (dc.status === 'verified') state.difyConnections[dc.candidate_id] = true;
+    });
+    // object-id-selected 필드에 기존 값 복원
+    if (state.selectedCandidateId) {
+      const dc = rd.dify_connections.find(d => d.candidate_id == state.selectedCandidateId && d.status === 'verified');
+      if (dc) {
+        const inp = document.getElementById('object-id-selected');
+        if (inp) inp.value = dc.object_id || '';
+        const st = document.getElementById(`dify-status-${state.selectedCandidateId}`);
+        if (st) { st.className = 'dify-status ok'; st.textContent = '✓'; }
+      }
+    }
+    checkAllDifyConnected();
+  }
   if (p3.logs) replayLogs('p3-log', p3.logs);
 
   // Phase 4
@@ -1247,24 +1337,69 @@ function updateP1Scores(scores) {
   document.getElementById('p1-sc4').textContent = fmt(wrong);
 }
 
+function updateP1EvalChart(data) {
+  const canvas = document.getElementById('p1-eval-chart');
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  if (state.p1EvalChart) state.p1EvalChart.destroy();
+  state.p1EvalChart = new Chart(ctx, {
+    type: 'doughnut',
+    data: {
+      labels: data.labels || ['정답', '과답', '오답'],
+      datasets: [{
+        data: data.values || [0, 0, 0],
+        backgroundColor: ['#a6e3a1', '#f9e2af', '#f38ba8'],
+        borderWidth: 2, borderColor: '#fff',
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { position: 'bottom', labels: { font: { size: 11 }, padding: 12 } },
+        tooltip: {
+          callbacks: {
+            label: function(ctx) {
+              const total = ctx.dataset.data.reduce((a, b) => a + b, 0);
+              const pct = total ? (ctx.parsed / total * 100).toFixed(1) : 0;
+              return `${ctx.label}: ${ctx.parsed}건 (${pct}%)`;
+            }
+          }
+        }
+      }
+    }
+  });
+}
+
 function updateP1BucketChart(data) {
-  const ctx = document.getElementById('p1-bucket-chart').getContext('2d');
+  const canvas = document.getElementById('p1-bucket-chart');
+  if (!canvas) return;
+  const hasData = data.values && data.values.some(v => v > 0);
+  const wrap = document.getElementById('p1-bucket-chart-wrap');
+  if (wrap) wrap.style.display = hasData ? '' : 'none';
+  const legend = document.getElementById('p1-bucket-legend');
+  if (legend) legend.style.display = hasData ? '' : 'none';
+  if (!hasData) return;
+  const ctx = canvas.getContext('2d');
   if (state.p1BucketChart) state.p1BucketChart.destroy();
   state.p1BucketChart = new Chart(ctx, {
     type: 'bar',
     data: {
-      labels: data.labels || ['정답', '과답', '오답', '기타'],
+      labels: data.labels || ['STT 오류', '프롬프트 누락', '모델 동작', 'Judge 이견'],
       datasets: [{
         label: '케이스 수',
         data: data.values || [0, 0, 0, 0],
-        backgroundColor: ['#a6e3a1', '#f9e2af', '#f38ba8', '#89b4fa'],
+        backgroundColor: ['#f38ba8', '#f9e2af', '#89b4fa', '#cba6f7'],
         borderRadius: 6
       }]
     },
     options: {
       responsive: true, maintainAspectRatio: false,
+      indexAxis: 'y',
       plugins: { legend: { display: false } },
-      scales: { y: { beginAtZero: true, ticks: { precision: 0 } } }
+      scales: {
+        x: { beginAtZero: true, ticks: { precision: 0 } },
+        y: { ticks: { font: { size: 11 } } }
+      }
     }
   });
 }
@@ -1272,18 +1407,22 @@ function updateP1BucketChart(data) {
 function renderP1Table(cases) {
   const tbody = document.getElementById('p1-table-body');
   if (!cases || !cases.length) {
-    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#aaa;padding:20px;">데이터 없음</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:#aaa;padding:20px;">데이터 없음</td></tr>';
     return;
   }
   tbody.innerHTML = cases.map(c => {
     const cls = c.judge === '오답' ? 'row-red' : c.judge === '과답' ? 'row-yellow' : '';
+    const hallucTag = c.hallucination ? ' <span class="halluc-tag">환각</span>' : '';
     return `<tr class="${cls}">
       <td>${esc(c.id || '')}</td>
       <td>${esc(c.judge || '')}</td>
-      <td>${esc(c.bucket || '')}</td>
+      <td>${esc(c.bucket || '')}${hallucTag}</td>
+      <td class="cell-wrap">${esc(c.analysis_summary || '')}</td>
       <td>${esc(c.stt_uncertain || '')}</td>
-      <td>${esc(c.summary || '')}</td>
-      <td>${esc(c.judge_disagreement || '')}</td>
+      <td class="cell-wrap">${esc(c.stt || '')}</td>
+      <td class="cell-wrap">${esc(c.reference || '')}</td>
+      <td class="cell-wrap">${esc(c.generated || '')}</td>
+      <td class="cell-wrap">${esc(c.judge_disagreement || '')}</td>
     </tr>`;
   }).join('');
 }
@@ -1297,18 +1436,19 @@ function resetP1UI() {
     if (el) el.textContent = '—';
   });
   // 차트 초기화
+  if (state.p1EvalChart) { state.p1EvalChart.destroy(); state.p1EvalChart = null; }
   if (state.p1BucketChart) { state.p1BucketChart.destroy(); state.p1BucketChart = null; }
   // 케이스 상태 초기화
   state.p1Cases = [];
   state.p1Sort = { col: null, dir: 1 };
-  state.p1Filter = { id: '', judge: '', bucket: '', stt_uncertain: '', summary: '', judge_disagreement: '' };
+  state.p1Filter = { id: '', judge: '', bucket: '', analysis_summary: '', stt_uncertain: '', stt: '', reference: '', generated: '', judge_disagreement: '', hallucination: '' };
   // 필터 입력값 초기화
   document.querySelectorAll('#p1-table .col-filter').forEach(el => { el.value = ''; });
   // 정렬 아이콘 초기화
   document.querySelectorAll('#p1-table .sort-icon').forEach(el => { el.textContent = '↕'; });
   // 테이블 초기화
   document.getElementById('p1-table-body').innerHTML =
-    '<tr><td colspan="6" style="text-align:center;color:#aaa;padding:20px;">분석 중...</td></tr>';
+    '<tr><td colspan="9" style="text-align:center;color:#aaa;padding:20px;">분석 중...</td></tr>';
   // 프로그레스 바 초기화
   const pw = document.getElementById('p1-progress-wrap');
   if (pw) pw.classList.remove('hidden');
@@ -1337,7 +1477,8 @@ function _appendP1RowDOM(c) {
   const cls = c.judge === '오답' ? 'row-red' : c.judge === '과답' ? 'row-yellow' : '';
   const tr = document.createElement('tr');
   tr.className = cls;
-  tr.innerHTML = `<td>${esc(c.id||'')}</td><td>${esc(c.judge||'')}</td><td>${esc(c.bucket||'')}</td><td>${esc(c.stt_uncertain||'')}</td><td>${esc(c.summary||'')}</td><td>${esc(c.judge_disagreement||'')}</td>`;
+  const hallucTag = c.hallucination ? ' <span class="halluc-tag">환각</span>' : '';
+  tr.innerHTML = `<td>${esc(c.id||'')}</td><td>${esc(c.judge||'')}</td><td>${esc(c.bucket||'')}${hallucTag}</td><td class="cell-wrap">${esc(c.analysis_summary||'')}</td><td>${esc(c.stt_uncertain||'')}</td><td class="cell-wrap">${esc(c.stt||'')}</td><td class="cell-wrap">${esc(c.reference||'')}</td><td class="cell-wrap">${esc(c.generated||'')}</td><td class="cell-wrap">${esc(c.judge_disagreement||'')}</td>`;
   tbody.appendChild(tr);
 }
 
@@ -1345,12 +1486,16 @@ function renderP1TableFromState() {
   let cases = [...state.p1Cases];
   const f = state.p1Filter;
   cases = cases.filter(c =>
-    (!f.id               || String(c.id||'').toLowerCase().includes(f.id.toLowerCase())) &&
-    (!f.judge            || String(c.judge||'').toLowerCase().includes(f.judge.toLowerCase())) &&
-    (!f.bucket           || String(c.bucket||'').toLowerCase().includes(f.bucket.toLowerCase())) &&
-    (!f.stt_uncertain    || String(c.stt_uncertain||'').toLowerCase().includes(f.stt_uncertain.toLowerCase())) &&
-    (!f.summary          || String(c.summary||'').toLowerCase().includes(f.summary.toLowerCase())) &&
-    (!f.judge_disagreement || String(c.judge_disagreement||'').toLowerCase().includes(f.judge_disagreement.toLowerCase()))
+    (!f.id                 || String(c.id||'').toLowerCase().includes(f.id.toLowerCase())) &&
+    (!f.judge              || String(c.judge||'').toLowerCase().includes(f.judge.toLowerCase())) &&
+    (!f.bucket             || String(c.bucket||'').toLowerCase().includes(f.bucket.toLowerCase())) &&
+    (!f.analysis_summary   || String(c.analysis_summary||'').toLowerCase().includes(f.analysis_summary.toLowerCase())) &&
+    (!f.stt_uncertain      || String(c.stt_uncertain||'').toLowerCase().includes(f.stt_uncertain.toLowerCase())) &&
+    (!f.stt                || String(c.stt||'').toLowerCase().includes(f.stt.toLowerCase())) &&
+    (!f.reference          || String(c.reference||'').toLowerCase().includes(f.reference.toLowerCase())) &&
+    (!f.generated          || String(c.generated||'').toLowerCase().includes(f.generated.toLowerCase())) &&
+    (!f.judge_disagreement || String(c.judge_disagreement||'').toLowerCase().includes(f.judge_disagreement.toLowerCase())) &&
+    (!f.hallucination      || (f.hallucination === '환각' ? c.hallucination : !c.hallucination))
   );
   const s = state.p1Sort;
   if (s.col) {
@@ -1464,14 +1609,18 @@ function renderP2Candidates(candidates) {
     container.innerHTML = '<div class="text-muted">후보가 없습니다.</div>';
     return;
   }
-  container.innerHTML = candidates.map(c => `
-    <div class="candidate-card ${c.label === 'FINAL' ? 'final' : ''}">
-      <div class="cc-label">${esc(c.label || 'A')}</div>
-      <div class="cc-nodes">노드 수: ${c.node_count || '?'}</div>
+  const selId = state.selectedCandidateId;
+  container.innerHTML = candidates.map(c => {
+    const isSelected = selId && selId == c.id;
+    const stepCount = c.node_count || (c.node_prompts ? c.node_prompts.length : 1);
+    return `
+    <div class="candidate-card ${c.label === 'FINAL' ? 'final' : ''} ${isSelected ? 'selected' : ''}" id="p2-card-${esc(c.id)}">
+      <div class="cc-label">후보 ${esc(c.label || 'A')} (${stepCount}-Step)</div>
+      <div class="cc-nodes">Step 수: ${stepCount}</div>
       <div class="cc-rationale">${esc(c.rationale || '')}</div>
       <div class="node-prompt-tabs" id="npt-${esc(c.id)}">
         ${(c.node_prompts || []).map((np, i) => `
-          <span class="npt-tab ${i===0?'active':''}" onclick="selectNodeTab('${esc(c.id)}', ${i}, this)">${esc(np.label || String.fromCharCode(65+i))}</span>
+          <span class="npt-tab ${i===0?'active':''}" onclick="selectNodeTab('${esc(c.id)}', ${i}, this)">Step ${i+1}</span>
         `).join('')}
       </div>
       <div id="npt-content-${esc(c.id)}" style="font-size:12px;color:#555;line-height:1.6;">
@@ -1479,8 +1628,9 @@ function renderP2Candidates(candidates) {
         ${c.node_prompts && c.node_prompts[0] && c.node_prompts[0].reasoning ?
           `<span class="reasoning-badge">추론: ${esc(c.node_prompts[0].reasoning)}</span>` : ''}
       </div>
-    </div>
-  `).join('');
+      <button class="btn-select-candidate" onclick="selectCandidate(${c.id})">${isSelected ? '✓ 선택됨' : '이 후보 선택'}</button>
+    </div>`;
+  }).join('');
   // Store candidates data for tab switching
   window._p2Candidates = candidates;
 }
@@ -1502,29 +1652,78 @@ function selectNodeTab(candidateId, idx, el) {
 }
 
 // ════════════════════════════════════════════
+// 후보 선택 (Phase 2 → Phase 3)
+// ════════════════════════════════════════════
+async function selectCandidate(candidateId) {
+  if (!state.selectedRunId) return;
+  try {
+    await apiFetch(`/api/runs/${state.selectedRunId}/select-candidate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ candidate_id: candidateId })
+    });
+    state.selectedCandidateId = candidateId;
+    state.difyConnections = {};
+    // UI 업데이트: Phase 2 카드 선택 표시
+    document.querySelectorAll('#p2-candidate-cards .candidate-card').forEach(card => {
+      card.classList.remove('selected');
+      const btn = card.querySelector('.btn-select-candidate');
+      if (btn) btn.textContent = '이 후보 선택';
+    });
+    const selCard = document.getElementById(`p2-card-${candidateId}`);
+    if (selCard) {
+      selCard.classList.add('selected');
+      const btn = selCard.querySelector('.btn-select-candidate');
+      if (btn) btn.textContent = '✓ 선택됨';
+    }
+    // Phase 3 영역 업데이트
+    const candidates = window._p2Candidates || [];
+    const c = candidates.find(x => x.id == candidateId);
+    if (c) renderP3ForSelected(c);
+    checkAllDifyConnected();
+  } catch (e) {
+    alert('후보 선택 실패: ' + e.message);
+  }
+}
+
+// ════════════════════════════════════════════
 // PHASE 3
 // ════════════════════════════════════════════
-function renderP3DifyCards(candidates) {
-  const container = document.getElementById('p3-dify-cards');
-  if (!candidates || !candidates.length) {
-    container.innerHTML = '<div class="text-muted">후보가 없습니다.</div>';
-    return;
-  }
-  state.difyConnections = {};
-  container.innerHTML = candidates.map(c => `
-    <div class="dify-card" id="dify-card-${esc(c.id)}">
-      <span class="dc-label">${esc(c.label || 'A')}</span>
+function renderP3ForSelected(candidate) {
+  const infoEl = document.getElementById('p3-selected-info');
+  const stepCount = candidate.node_count || (candidate.node_prompts ? candidate.node_prompts.length : 1);
+  let stepsHtml = '';
+  (candidate.node_prompts || []).forEach((np, i) => {
+    const id = `p3-step-${candidate.id}-${i}`;
+    stepsHtml += `
+      <div class="p3-step-preview">
+        <div class="p3-step-toggle" onclick="document.getElementById('${id}').classList.toggle('open')">
+          ▸ Step ${i+1} 프롬프트 ${np.reasoning ? '<span class="reasoning-badge">추론: ' + esc(np.reasoning) + '</span>' : ''}
+        </div>
+        <div class="p3-step-body" id="${id}">${esc(np.content || '')}</div>
+      </div>`;
+  });
+  infoEl.innerHTML = `
+    <h4>선택된 후보: 후보 ${esc(candidate.label || 'A')} (${stepCount}-Step)</h4>
+    <div style="font-size:12px;color:#555;line-height:1.6;margin:8px 0;">${esc(candidate.rationale || '')}</div>
+    ${stepsHtml}
+  `;
+  // 단일 Dify 입력
+  const difyEl = document.getElementById('p3-dify-single');
+  difyEl.innerHTML = `
+    <div class="dify-card" id="dify-card-${esc(candidate.id)}">
+      <span class="dc-label">후보 ${esc(candidate.label || 'A')}</span>
       <label style="font-size:12px;color:#6c7086;margin-right:4px;">워크플로우 Object ID</label>
-      <input type="text" class="dify-input" id="object-id-${esc(c.label || 'A')}" placeholder="Dify 워크플로우에서 확인한 Object ID 입력" />
-      <button class="dify-connect-btn" onclick="connectDify('${esc(c.id)}', '${esc(c.label || 'A')}')">연결 확인</button>
-      <span class="dify-status" id="dify-status-${esc(c.id)}"></span>
+      <input type="text" class="dify-input" id="object-id-selected" placeholder="Dify 워크플로우에서 확인한 Object ID 입력" />
+      <button class="dify-connect-btn" onclick="connectDify('${esc(candidate.id)}', '${esc(candidate.label || 'A')}')">연결 확인</button>
+      <span class="dify-status" id="dify-status-${esc(candidate.id)}"></span>
     </div>
-  `).join('');
+  `;
 }
 
 async function connectDify(candidateId, label) {
   if (!state.selectedRunId) return;
-  const objectId = document.getElementById(`object-id-${label}`)?.value?.trim();
+  const objectId = document.getElementById('object-id-selected')?.value?.trim();
   if (!objectId) { alert('Object ID를 입력하세요.'); return; }
 
   const statusEl = document.getElementById(`dify-status-${candidateId}`);
@@ -1548,10 +1747,9 @@ async function connectDify(candidateId, label) {
 }
 
 function checkAllDifyConnected() {
-  const p2 = (state.runData && state.runData.phases && state.runData.phases[2]) || {};
-  const candidates = p2.candidates || [];
-  const allConnected = candidates.length > 0 && candidates.every(c => state.difyConnections[c.id]);
-  document.getElementById('btn-p3-execute').disabled = !allConnected;
+  // 선택된 1개 후보만 연결되면 활성화
+  const connected = state.selectedCandidateId && state.difyConnections[state.selectedCandidateId];
+  document.getElementById('btn-p3-execute').disabled = !connected;
 }
 
 document.getElementById('btn-p3-execute').addEventListener('click', async () => {
@@ -1812,13 +2010,21 @@ function handlePhaseResult(num, data) {
   switch (num) {
     case 1:
       if (data.scores) updateP1Scores(data.scores);
-      if (data.cases) renderP1Table(data.cases);
+      if (data.eval_chart) updateP1EvalChart(data.eval_chart);
       if (data.bucket_chart) updateP1BucketChart(data.bucket_chart);
+      if (data.cases) renderP1Table(data.cases);
       break;
     case 2:
-      if (data.candidates) { renderP2Candidates(data.candidates); renderP3DifyCards(data.candidates); }
+      if (data.candidates) {
+        window._p2Candidates = data.candidates;
+        state.selectedCandidateId = null;
+        renderP2Candidates(data.candidates);
+        // Phase 3 초기화 (새 후보 생성 시)
+        document.getElementById('p3-selected-info').innerHTML = '<div class="text-muted">Phase 2에서 후보를 선택하세요.</div>';
+        document.getElementById('p3-dify-single').innerHTML = '<div class="text-muted">후보 선택 후 표시됩니다.</div>';
+        document.getElementById('btn-p3-execute').disabled = true;
+      }
       if (data.design_summary) document.getElementById('p2-design-summary').textContent = data.design_summary;
-      if (data.spec_summary) document.getElementById('p3-spec-summary').textContent = data.spec_summary;
       break;
     case 3:
       // Phase 3 완료 - Dify 실행 결과는 로그로 표시됨

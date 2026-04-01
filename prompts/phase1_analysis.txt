@@ -8,26 +8,57 @@ LLM Judge의 판정은 참고자료일 뿐이다. 너는 STT 원문을 기준으
 - Generated (AI 생성 요약): {generated}
 - Judge 판정: {judge_evaluation} / 사유: {judge_reason}
 
-[분석 지시]
-1. STT를 직접 읽고, Generated가 STT에 있는 내용을 정확히 담고 있는지 평가하라.
-2. STT에서 문맥상 의미가 불명확하거나 발음 오류로 의심되는 표현을 찾아라.
-   발견 시 "[STT_UNCERTAIN: 의심 표현]" 형식으로 표시하라.
-3. Generated에서 STT에도 없는 내용(환각)이 있는지 확인하라.
-4. Reference와 Generated의 차이가 "더 나쁜" 방향인지, "단순히 다른" 방향인지 판단하라.
-5. Judge 판정에 동의하는가? 이견이 있으면 이유를 설명하라.
-6. 아래 4가지 중 이 케이스의 근본 원인을 하나만 선택하라:
-   - stt_error: STT 오전사가 오류의 근본 원인
-   - prompt_missing: 프롬프트에 해당 상황 커버 지시가 없음
-   - model_behavior: 지시가 있음에도 모델이 따르지 않음
-   - judge_dispute: Judge 판정 자체가 과잉/과소
+[분석 지시 — 아래 순서를 반드시 따르라]
+
+단계 1: STT 원문 검증
+- STT를 처음부터 끝까지 읽고, 핵심 내용(고객 불만, 상담 내용, 처리 결과)을 파악하라.
+- STT에서 문맥상 의미가 불명확하거나 발음 오류로 의심되는 표현을 모두 찾아라.
+  발견 시 "[STT_UNCERTAIN: 의심 표현]" 형식으로 표시하라.
+
+단계 2: Generated 품질 평가
+- Generated가 STT의 핵심 내용을 빠짐없이 담고 있는지 평가하라.
+- Generated에서 STT에 없는 내용(환각/hallucination)이 있는지 확인하라.
+  → 있으면 구체적으로 어떤 내용이 환각인지 기술하라.
+- Generated가 STT의 불확실한 표현을 임의로 해석/추론했는지 확인하라.
+
+단계 3: Reference와 비교 분석
+- Reference와 Generated의 차이점을 구체적으로 나열하라.
+- 각 차이가 "품질 저하"인지 "단순히 다른 표현"인지 판단하라.
+- Reference에는 있지만 Generated에서 누락된 정보를 명시하라.
+- Generated에는 있지만 Reference에 없는 정보가 있으면 그것이 STT에 근거한 것인지 확인하라.
+
+단계 4: Judge 판정 독립 검증
+- Judge 판정에 동의하는가? 동의하지 않으면 구체적 이유를 설명하라.
+- Judge가 "오답"으로 판정한 경우: 정말 핵심 정보가 누락/왜곡되었는가?
+- Judge가 "과답"으로 판정한 경우: 추가된 정보가 정말 불필요하거나 해로운가?
+
+단계 5: 근본 원인 분류
+아래 4가지 중 근본 원인(primary)을 하나 선택하고, 해당되면 보조 원인(secondary)도 선택하라:
+- stt_error: STT 오전사가 오류의 근본 원인 (발음 인식 실패, 문장 잘림 등)
+- prompt_missing: 프롬프트에 해당 상황을 커버하는 지시가 없음
+- model_behavior: 지시가 있음에도 모델이 따르지 않음
+- judge_dispute: Judge 판정 자체가 과잉/과소 (실제로는 정답에 가까움)
+
+단계 6: 개선 방향 도출
+- bucket이 prompt_missing일 때: 프롬프트에 어떤 지시가 추가되어야 하는지 구체적으로 기술하라.
+  예) "고객이 여러 건의 불만을 언급할 때 모두 나열하라는 지시가 필요"
+- bucket이 model_behavior일 때: 모델이 따르지 않은 기존 지시가 무엇인지 명시하라.
+  예) "원문에 없는 내용 추가 금지 지시를 위반하여 환각 발생"
+- 이 케이스를 정답으로 만들려면 프롬프트를 어떻게 수정해야 하는지 1~2문장으로 제안하라.
 
 [출력 형식 - JSON만 출력]
 {{
   "case_id": "{case_id}",
   "bucket": "stt_error|prompt_missing|model_behavior|judge_dispute",
+  "secondary_bucket": "없으면 null, 있으면 위 4가지 중 하나",
   "stt_uncertain_expressions": ["표현1", "표현2"],
   "hallucination_detected": true,
+  "hallucination_detail": "환각 내용 구체적 기술 (없으면 빈 문자열)",
   "judge_agreement": true,
   "judge_dispute_reason": "이견 사유 (agreement=false일 때만)",
-  "analysis_summary": "2~3문장 분석 요약"
+  "missing_instruction": "프롬프트에 빠진 지시 내용 (bucket=prompt_missing일 때, 아니면 빈 문자열)",
+  "violated_instruction": "모델이 따르지 않은 지시 (bucket=model_behavior일 때, 아니면 빈 문자열)",
+  "error_pattern": "오류 패턴 한줄 요약 (예: 'STT 불확실 표현 임의 해석', '다건 불만 중 일부 누락')",
+  "improvement_suggestion": "이 케이스를 정답으로 만들기 위한 프롬프트 수정 제안 (1~2문장)",
+  "analysis_summary": "위 분석 단계 1~6의 핵심 내용을 5~7문장으로 종합 정리"
 }}

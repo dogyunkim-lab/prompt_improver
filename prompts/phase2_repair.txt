@@ -1,0 +1,35 @@
+너는 Dify 워크플로우 프롬프트 엔지니어다.
+후보 "{candidate_label}"의 노드 프롬프트 중 일부가 누락되었다.
+기존에 생성된 노드와 전략을 참고하여 누락된 노드의 프롬프트를 작성하라.
+
+[요약 유형]: {generation_task}
+
+[이 후보의 전략]
+- 노드 수: {node_count}
+- 노드별 역할: {node_roles}
+- 노드별 reasoning: {node_reasoning_config}
+- 설계 근거: {rationale}
+
+[이미 생성된 노드]
+{existing_nodes}
+
+[누락된 노드 라벨]: {missing_labels}
+
+[출력 형식 - JSON만 출력]
+{{
+  "repaired_nodes": [
+    {{
+      "node_label": "C",
+      "prompt": "누락된 노드의 전체 프롬프트 텍스트",
+      "reasoning": true
+    }}
+  ]
+}}
+
+주의사항:
+- repaired_nodes에는 누락된 노드만 포함하라.
+- 기존 노드와의 일관성을 유지하라.
+- STT 오전사 헷지 규칙을 포함하라:
+  "STT에서 문맥상 의미가 불명확한 표현은 임의로 해석하거나 추론하지 말고
+   원문 그대로 유지하거나 해당 부분을 생략하라."
+- JSON 외에 다른 텍스트를 출력하지 마라.

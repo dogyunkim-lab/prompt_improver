@@ -95,6 +95,15 @@ async def init_db():
                 evaluation      TEXT,
                 reason          TEXT,
                 bucket          TEXT,
+                analysis_summary     TEXT,
+                stt_uncertain        TEXT,
+                hallucination_detected INTEGER DEFAULT 0,
+                judge_agreement      INTEGER DEFAULT 1,
+                judge_disagreement   TEXT,
+                missing_instruction  TEXT,
+                violated_instruction TEXT,
+                error_pattern        TEXT,
+                improvement_suggestion TEXT,
                 created_at      DATETIME DEFAULT CURRENT_TIMESTAMP
             );
 
@@ -111,4 +120,26 @@ async def init_db():
                 created_at      DATETIME DEFAULT CURRENT_TIMESTAMP
             );
         """)
+        await db.commit()
+
+        # Migration: 기존 DB에 새 컬럼이 없으면 추가 (SQLite ADD COLUMN은 항상 nullable)
+        _migration_stmts = [
+            "ALTER TABLE case_results ADD COLUMN analysis_summary TEXT",
+            "ALTER TABLE case_results ADD COLUMN stt_uncertain TEXT",
+            "ALTER TABLE case_results ADD COLUMN hallucination_detected INTEGER DEFAULT 0",
+            "ALTER TABLE case_results ADD COLUMN judge_agreement INTEGER DEFAULT 1",
+            "ALTER TABLE case_results ADD COLUMN judge_disagreement TEXT",
+            # Phase 1 분석 강화 필드
+            "ALTER TABLE case_results ADD COLUMN missing_instruction TEXT",
+            "ALTER TABLE case_results ADD COLUMN violated_instruction TEXT",
+            "ALTER TABLE case_results ADD COLUMN error_pattern TEXT",
+            "ALTER TABLE case_results ADD COLUMN improvement_suggestion TEXT",
+            # Phase 2→3 후보 선택
+            "ALTER TABLE runs ADD COLUMN selected_candidate_id INTEGER",
+        ]
+        for stmt in _migration_stmts:
+            try:
+                await db.execute(stmt)
+            except Exception:
+                pass  # 컬럼이 이미 존재하면 무시
         await db.commit()

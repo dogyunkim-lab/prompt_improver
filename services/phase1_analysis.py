@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os
 from datetime import datetime
@@ -7,7 +8,7 @@ from services.gpt_client import call_gpt
 from services.sse_helpers import log_event, progress_event, result_event, done_event, case_event
 
 PROMPT_PATH = "prompts/phase1_analysis.txt"
-BATCH_SIZE = 5
+CONCURRENT = 5   # 동시 GPT 호출 수
 
 
 def load_prompt() -> str:
@@ -16,8 +17,7 @@ def load_prompt() -> str:
 
 
 def _detect_eval_field(cases: list) -> str:
-    """JSON 케이스에서 오답/정답/과답 값이 들어있는 필드명 자동 감지.
-    'evaluation', 'answer_evaluation' 등 다양한 필드명을 지원한다."""
+    """JSON 케이스에서 오답/정답/과답 값이 들어있는 필드명 자동 감지."""
     eval_values = {"오답", "과답", "정답"}
     for field in ("evaluation", "answer_evaluation", "judge_result", "judge", "result"):
         if any(str(c.get(field, "")) in eval_values for c in cases[:20]):
@@ -28,6 +28,31 @@ def _detect_eval_field(cases: list) -> str:
             if str(val) in eval_values:
                 return key
     return "evaluation"
+
+
+def _detect_reason_field(cases: list) -> str:
+    """Judge reason/explanation 필드명 자동 감지."""
+    for field in ("reason", "judge_reason", "evaluation_reason", "rationale", "explanation", "comment"):
+        if any(isinstance(c.get(field), str) and c.get(field, "").strip() for c in cases[:10]):
+            return field
+    return "reason"
+
+
+async def _call_gpt_case(case: dict, prompt_template: str, eval_field: str, reason_field: str) -> dict:
+    """단일 케이스 GPT 분석. DB 조작 없음 — asyncio.gather에서 병렬 실행 가능."""
+    case_prompt = prompt_template.format(
+        stt=case.get("stt", ""),
+        reference=case.get("reference", ""),
+        keywords=case.get("keywords", ""),
+        generated=case.get("generated", ""),
+        judge_evaluation=case.get(eval_field, ""),
+        judge_reason=case.get(reason_field, ""),
+        case_id=case.get("id", "")
+    )
+    raw = await call_gpt([{"role": "user", "content": case_prompt}], reasoning="high")
+    result = _extract_json(raw)
+    result["case_id"] = str(case.get("id", ""))  # case_id 항상 보장
+    return result
 
 
 async def run_phase1(run_id: int) -> AsyncGenerator[str, None]:
@@ -76,7 +101,6 @@ async def run_phase1(run_id: int) -> AsyncGenerator[str, None]:
             await _mark_phase_failed(run_id, 1)
             return
 
-        # 각 요소가 dict인지 확인
         judge_data = [c for c in judge_data if isinstance(c, dict)]
         if not judge_data:
             yield log_event("error", "JSON 파일에서 유효한 케이스(dict 형식)를 찾을 수 없습니다.")
@@ -86,9 +110,10 @@ async def run_phase1(run_id: int) -> AsyncGenerator[str, None]:
 
         yield log_event("info", f"감지된 필드: {list(judge_data[0].keys())}")
 
-        # 판정 결과 필드명 자동 감지 (evaluation, answer_evaluation 등)
+        # 판정/사유 필드명 자동 감지
         eval_field = _detect_eval_field(judge_data)
-        yield log_event("info", f"판정 필드: '{eval_field}'")
+        reason_field = _detect_reason_field(judge_data)
+        yield log_event("info", f"판정 필드: '{eval_field}' | 사유 필드: '{reason_field}'")
 
         # 오답/과답 케이스 추출
         error_cases = [c for c in judge_data if c.get(eval_field) in ("오답", "과답")]
@@ -97,7 +122,7 @@ async def run_phase1(run_id: int) -> AsyncGenerator[str, None]:
 
         yield log_event("info", f"전체 {total_cases}건 중 오답/과답 {error_count}건 분석 시작")
 
-        # 전체 케이스 case_results에 저장 (generated 없으므로 judge 결과만)
+        # 전체 케이스 case_results에 저장
         for case in judge_data:
             await db.execute(
                 """INSERT OR IGNORE INTO case_results
@@ -105,7 +130,7 @@ async def run_phase1(run_id: int) -> AsyncGenerator[str, None]:
                    VALUES (?,?,?,?,?,?,?,?,?)""",
                 (run_id, str(case.get("id", "")), case.get("generation_task", ""),
                  case.get("stt", ""), case.get("reference", ""), case.get("keywords", ""),
-                 case.get("generated", ""), case.get(eval_field, ""), case.get("reason", ""))
+                 case.get("generated", ""), case.get(eval_field, ""), case.get(reason_field, ""))
             )
         await db.commit()
 
@@ -119,80 +144,171 @@ async def run_phase1(run_id: int) -> AsyncGenerator[str, None]:
                     "id": str(case.get("id", "")),
                     "judge": case.get(eval_field, ""),
                     "bucket": "",
+                    "analysis_summary": "",
                     "stt_uncertain": "",
-                    "summary": case.get("generated", ""),
-                    "judge_disagreement": case.get("reason", ""),
+                    "stt": case.get("stt", ""),
+                    "reference": case.get("reference", ""),
+                    "generated": case.get("generated", ""),
+                    "judge_disagreement": case.get(reason_field, ""),
+                    "hallucination": False,
                 })
 
         if error_count == 0:
             yield log_event("ok", "오답/과답 케이스가 없습니다. Phase 1 완료.")
+            correct_count = sum(1 for c in judge_data if c.get(eval_field) == "정답")
+            over_count    = sum(1 for c in judge_data if c.get(eval_field) == "과답")
+            wrong_count   = sum(1 for c in judge_data if c.get(eval_field) == "오답")
+            zero_summary = {
+                "bucket_counts": {}, "top_issues": [], "prompt_improvable_cases": [],
+                "judge_dispute_cases": [], "recommended_focus": "오류 케이스 없음",
+                "scores": {
+                    "correct_plus_over": round((correct_count + over_count) / total_cases * 100, 1) if total_cases else 0,
+                    "correct": round(correct_count / total_cases * 100, 1) if total_cases else 0,
+                    "over":    round(over_count    / total_cases * 100, 1) if total_cases else 0,
+                    "wrong":   round(wrong_count   / total_cases * 100, 1) if total_cases else 0,
+                    "total": total_cases,
+                    "correct_count": correct_count,
+                    "over_count": over_count,
+                    "wrong_count": wrong_count,
+                },
+                "eval_chart": {
+                    "labels": ["정답", "과답", "오답"],
+                    "values": [correct_count, over_count, wrong_count],
+                },
+                "bucket_chart": {
+                    "labels": ["STT 오류", "프롬프트 누락", "모델 동작", "Judge 이견"],
+                    "values": [0, 0, 0, 0],
+                },
+            }
+            await _mark_phase_completed(run_id, 1, zero_summary)
+            yield result_event(zero_summary)
             yield done_event("completed")
-            await _mark_phase_completed(run_id, 1, {"bucket_counts": {}, "top_issues": [], "prompt_improvable_cases": [], "judge_dispute_cases": [], "recommended_focus": "오류 케이스 없음"})
             return
 
         prompt_template = load_prompt()
         case_analyses = []
+        sem = asyncio.Semaphore(CONCURRENT)
 
-        # 배치 분석
-        for i in range(0, error_count, BATCH_SIZE):
-            batch = error_cases[i:i + BATCH_SIZE]
-            batch_results = []
+        async def _analyze_with_sem(c):
+            async with sem:
+                return await _call_gpt_case(c, prompt_template, eval_field, reason_field)
 
-            for case in batch:
-                case_prompt = prompt_template.format(
-                    stt=case.get("stt", ""),
-                    reference=case.get("reference", ""),
-                    keywords=case.get("keywords", ""),
-                    generated=case.get("generated", ""),
-                    judge_evaluation=case.get(eval_field, ""),
-                    judge_reason=case.get("reason", ""),
-                    case_id=case.get("id", "")
+        # ── 배치 병렬 분석 ────────────────────────────────────────────────────
+        done_count = 0
+        for i in range(0, error_count, CONCURRENT):
+            batch = error_cases[i:i + CONCURRENT]
+            yield log_event("info", f"케이스 {i+1}~{min(i+len(batch), error_count)} 병렬 분석 중...")
+
+            outcomes = await asyncio.gather(
+                *[_analyze_with_sem(c) for c in batch],
+                return_exceptions=True
+            )
+
+            for case, outcome in zip(batch, outcomes):
+                done_count += 1
+                if isinstance(outcome, Exception):
+                    yield log_event("warn", f"케이스 {case.get('id', '?')} 분석 실패: {outcome}")
+                    result = {"case_id": str(case.get("id", "")), "bucket": "prompt_missing",
+                              "analysis_summary": "", "stt_uncertain_expressions": [],
+                              "hallucination_detected": False, "judge_agreement": True,
+                              "judge_dispute_reason": ""}
+                else:
+                    result = outcome
+
+                # 필드 정규화
+                stt_uncertain_list = result.get("stt_uncertain_expressions", [])
+                stt_uncertain_str = (", ".join(stt_uncertain_list)
+                                     if isinstance(stt_uncertain_list, list)
+                                     else str(stt_uncertain_list))
+                judge_disagree = ""
+                if not result.get("judge_agreement", True):
+                    judge_disagree = result.get("judge_dispute_reason", "")
+
+                # 새 분석 필드
+                missing_instruction = result.get("missing_instruction", "")
+                violated_instruction = result.get("violated_instruction", "")
+                error_pattern = result.get("error_pattern", "")
+                improvement_suggestion = result.get("improvement_suggestion", "")
+
+                # ── DB 저장 (확장 필드 포함) ──
+                await db.execute(
+                    """UPDATE case_results
+                       SET bucket=?, analysis_summary=?, stt_uncertain=?,
+                           hallucination_detected=?, judge_agreement=?, judge_disagreement=?,
+                           missing_instruction=?, violated_instruction=?,
+                           error_pattern=?, improvement_suggestion=?
+                       WHERE run_id=? AND case_id=?""",
+                    (result.get("bucket", ""),
+                     result.get("analysis_summary", ""),
+                     stt_uncertain_str,
+                     1 if result.get("hallucination_detected") else 0,
+                     1 if result.get("judge_agreement", True) else 0,
+                     judge_disagree,
+                     missing_instruction,
+                     violated_instruction,
+                     error_pattern,
+                     improvement_suggestion,
+                     run_id, str(case.get("id", "")))
                 )
-                yield log_event("info", f"케이스 {case.get('id', '?')} 분석 중...")
-                try:
-                    messages = [{"role": "user", "content": case_prompt}]
-                    raw = await call_gpt(messages, reasoning="high")
-                    # JSON 추출
-                    result = _extract_json(raw)
-                    batch_results.append(result)
-                    # bucket 저장
-                    await db.execute(
-                        "UPDATE case_results SET bucket=? WHERE run_id=? AND case_id=?",
-                        (result.get("bucket", ""), run_id, str(case.get("id", "")))
-                    )
-                    await db.commit()
-                    yield log_event("ok", f"케이스 {case.get('id', '?')} → {result.get('bucket', 'unknown')}")
-                    yield case_event({
-                        "id": str(case.get("id", "")),
-                        "judge": case.get(eval_field, ""),
-                        "bucket": result.get("bucket", ""),
-                        "stt_uncertain": "",
-                        "summary": case.get("generated", ""),
-                        "judge_disagreement": case.get("reason", ""),
-                    })
-                except Exception as e:
-                    yield log_event("warn", f"케이스 {case.get('id', '?')} 분석 실패: {e}")
-                    batch_results.append({"case_id": str(case.get("id", "")), "bucket": "prompt_missing"})
 
-            # BUG-9 fix: extend는 배치 루프 종료 후 한 번만 호출
-            case_analyses.extend(batch_results)
-            yield progress_event(min(i + len(batch), error_count), error_count)
+                # 원문 텍스트도 result에 첨부 (summarize_all에서 활용)
+                result["_stt"] = case.get("stt", "")
+                result["_reference"] = case.get("reference", "")
+                result["_generated"] = case.get("generated", "")
+                result["_judge_evaluation"] = case.get(eval_field, "")
+                case_analyses.append(result)
 
-        # 전체 패턴 요약
+                bucket_label = result.get("bucket", "unknown")
+                secondary = result.get("secondary_bucket")
+                if secondary:
+                    bucket_label += f"+{secondary}"
+                yield log_event("ok", f"케이스 {case.get('id', '?')} → {bucket_label}")
+                yield case_event({
+                    "id": str(case.get("id", "")),
+                    "judge": case.get(eval_field, ""),
+                    "bucket": result.get("bucket", ""),
+                    "secondary_bucket": result.get("secondary_bucket", ""),
+                    "analysis_summary": result.get("analysis_summary", ""),
+                    "stt_uncertain": stt_uncertain_str,
+                    "stt": case.get("stt", ""),
+                    "reference": case.get("reference", ""),
+                    "generated": case.get("generated", ""),
+                    "judge_disagreement": judge_disagree or case.get(reason_field, ""),
+                    "hallucination": bool(result.get("hallucination_detected", False)),
+                    "hallucination_detail": result.get("hallucination_detail", ""),
+                    "missing_instruction": missing_instruction,
+                    "violated_instruction": violated_instruction,
+                    "error_pattern": error_pattern,
+                    "improvement_suggestion": improvement_suggestion,
+                })
+
+            await db.commit()
+            yield progress_event(done_count, error_count)
+
+        # ── 전체 패턴 요약 ────────────────────────────────────────────────────
         yield log_event("info", "전체 패턴 요약 생성 중...")
         summary = await _summarize_all(case_analyses, error_count)
         yield log_event("ok", f"분석 완료 — 주요 이슈: {', '.join(summary.get('top_issues', []))}")
 
-        # BUG-10: baseline scores, cases, bucket_chart를 output_data에 포함
+        # baseline 점수 추가
         correct_count = sum(1 for c in judge_data if c.get(eval_field) == "정답")
-        over_count = sum(1 for c in judge_data if c.get(eval_field) == "과답")
-        wrong_count = sum(1 for c in judge_data if c.get(eval_field) == "오답")
+        over_count    = sum(1 for c in judge_data if c.get(eval_field) == "과답")
+        wrong_count   = sum(1 for c in judge_data if c.get(eval_field) == "오답")
         summary["scores"] = {
             "correct_plus_over": round((correct_count + over_count) / total_cases * 100, 1) if total_cases else 0,
             "correct": round(correct_count / total_cases * 100, 1) if total_cases else 0,
-            "over": round(over_count / total_cases * 100, 1) if total_cases else 0,
-            "wrong": round(wrong_count / total_cases * 100, 1) if total_cases else 0,
+            "over":    round(over_count    / total_cases * 100, 1) if total_cases else 0,
+            "wrong":   round(wrong_count   / total_cases * 100, 1) if total_cases else 0,
             "total": total_cases,
+            "correct_count": correct_count,
+            "over_count": over_count,
+            "wrong_count": wrong_count,
+        }
+
+        # 판정 분포 차트 (정답/과답/오답 raw count)
+        summary["eval_chart"] = {
+            "labels": ["정답", "과답", "오답"],
+            "values": [correct_count, over_count, wrong_count],
         }
 
         bucket_counts = summary.get("bucket_counts", {})
@@ -222,52 +338,131 @@ async def run_phase1(run_id: int) -> AsyncGenerator[str, None]:
 
 
 def _extract_json(text: str) -> dict:
-    try:
-        start = text.find("{")
-        end = text.rfind("}") + 1
-        if start >= 0 and end > start:
+    """GPT 응답에서 JSON 블록 추출 (```json ... ``` 코드펜스 포함 처리)."""
+    if not text:
+        return {}
+    # ```json ... ``` 코드펜스 제거
+    import re
+    fence = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
+    if fence:
+        try:
+            return json.loads(fence.group(1))
+        except Exception:
+            pass
+    # 일반 JSON 추출
+    start = text.find("{")
+    end = text.rfind("}") + 1
+    if start >= 0 and end > start:
+        try:
             return json.loads(text[start:end])
-    except Exception:
-        pass
+        except Exception:
+            pass
     return {}
 
 
 async def _summarize_all(case_analyses: list, n: int) -> dict:
-    analyses_text = json.dumps(case_analyses, ensure_ascii=False, indent=2)
-    prompt = f"""위 {n}개 케이스 분석 결과를 종합하여 아래 항목을 JSON으로 출력하라:
+    """
+    버킷별 집계는 직접 계산 (GPT 의존 없음).
+    top_issues / recommended_focus만 GPT에게 요청.
+    prompt_improvable_cases에 원문 텍스트 + 구체적 분석 필드를 담아 Phase 2에서 활용.
+    """
+    # ── 직접 집계 ──────────────────────────────────────────────────────────────
+    bucket_counts = {"stt_error": 0, "prompt_missing": 0, "model_behavior": 0, "judge_dispute": 0}
+    prompt_improvable = []
+    judge_dispute_list = []
+    error_pattern_groups = {}  # 오류 패턴별 그룹핑
+
+    for a in case_analyses:
+        b = a.get("bucket", "")
+        if b in bucket_counts:
+            bucket_counts[b] += 1
+        # secondary_bucket도 집계
+        sb = a.get("secondary_bucket")
+        if sb and sb in bucket_counts:
+            bucket_counts[sb] += 0.5  # 보조 원인은 0.5로 카운트
+
+        # 오류 패턴 그룹핑
+        ep = a.get("error_pattern", "")
+        if ep:
+            error_pattern_groups.setdefault(ep, []).append(a.get("case_id", ""))
+
+        # 프롬프트로 개선 가능한 케이스 (prompt_missing / model_behavior)
+        if b in ("prompt_missing", "model_behavior"):
+            prompt_improvable.append({
+                "case_id": a.get("case_id", ""),
+                "bucket": b,
+                "secondary_bucket": a.get("secondary_bucket"),
+                "analysis_summary": a.get("analysis_summary", ""),
+                "hallucination": bool(a.get("hallucination_detected", False)),
+                "hallucination_detail": a.get("hallucination_detail", ""),
+                "missing_instruction": a.get("missing_instruction", ""),
+                "violated_instruction": a.get("violated_instruction", ""),
+                "error_pattern": ep,
+                "improvement_suggestion": a.get("improvement_suggestion", ""),
+                # Phase 2에서 구체적 예시로 활용할 원문 텍스트
+                "stt": a.get("_stt", ""),
+                "reference": a.get("_reference", ""),
+                "generated": a.get("_generated", ""),
+            })
+        # Judge 이견 케이스
+        if b == "judge_dispute" or not a.get("judge_agreement", True):
+            judge_dispute_list.append({
+                "case_id": a.get("case_id", ""),
+                "analysis_summary": a.get("analysis_summary", ""),
+                "dispute_reason": a.get("judge_dispute_reason", ""),
+            })
+
+    # 오류 패턴 빈도순 정렬
+    error_pattern_ranking = sorted(
+        [{"pattern": k, "count": len(v), "case_ids": v} for k, v in error_pattern_groups.items()],
+        key=lambda x: x["count"], reverse=True
+    )
+
+    # bucket_counts 정수화 (secondary로 인한 0.5 → 반올림)
+    bucket_counts = {k: round(v) for k, v in bucket_counts.items()}
+
+    # ── GPT: 정성적 요약만 요청 ────────────────────────────────────────────────
+    # 내부 참조용 원문 필드는 제거하고 GPT에 전달
+    analyses_for_gpt = []
+    for a in case_analyses:
+        filtered = {k: v for k, v in a.items() if not k.startswith("_")}
+        analyses_for_gpt.append(filtered)
+
+    analyses_text = json.dumps(analyses_for_gpt, ensure_ascii=False, indent=2)
+    prompt = f"""아래는 오답/과답 케이스 {n}개의 분석 데이터다.
+이를 바탕으로 다음 JSON만 출력하라 (설명 없이 JSON만):
 {{
-  "bucket_counts": {{
-    "stt_error": n,
-    "prompt_missing": n,
-    "model_behavior": n,
-    "judge_dispute": n
-  }},
-  "top_issues": ["주요 문제 1", "주요 문제 2", "주요 문제 3"],
-  "prompt_improvable_cases": [],
-  "judge_dispute_cases": [],
-  "recommended_focus": "Phase 2에서 집중해야 할 개선 방향 서술"
+  "top_issues": ["가장 자주 발생하는 오류 유형 설명 1", "설명 2", "설명 3"],
+  "recommended_focus": "Phase 2 프롬프트 개선 시 가장 중요하게 다뤄야 할 방향. 구체적인 프롬프트 수정 방향을 포함하여 4~6문장으로 작성하라."
 }}
 
 분석 데이터:
 {analyses_text}"""
+
+    top_issues = []
+    recommended_focus = ""
     try:
-        messages = [{"role": "user", "content": prompt}]
-        raw = await call_gpt(messages, reasoning="high")
-        return _extract_json(raw)
+        raw = await call_gpt([{"role": "user", "content": prompt}], reasoning="high")
+        gpt = _extract_json(raw)
+        top_issues = gpt.get("top_issues", [])
+        recommended_focus = gpt.get("recommended_focus", "")
     except Exception:
-        # fallback: 수동 집계
-        bucket_counts = {"stt_error": 0, "prompt_missing": 0, "model_behavior": 0, "judge_dispute": 0}
-        for a in case_analyses:
-            b = a.get("bucket", "")
-            if b in bucket_counts:
-                bucket_counts[b] += 1
-        return {
-            "bucket_counts": bucket_counts,
-            "top_issues": ["분석 요약 생성 실패"],
-            "prompt_improvable_cases": [],
-            "judge_dispute_cases": [],
-            "recommended_focus": "수동 확인 필요"
-        }
+        # fallback: analysis_summary에서 대표 텍스트 추출
+        top_issues = list({
+            a.get("analysis_summary", "")[:60]
+            for a in case_analyses[:5]
+            if a.get("analysis_summary")
+        })
+        recommended_focus = "수동 확인 필요"
+
+    return {
+        "bucket_counts": bucket_counts,
+        "top_issues": top_issues,
+        "error_pattern_ranking": error_pattern_ranking,
+        "prompt_improvable_cases": prompt_improvable,
+        "judge_dispute_cases": judge_dispute_list,
+        "recommended_focus": recommended_focus,
+    }
 
 
 async def _mark_phase_completed(run_id: int, phase: int, output_data: dict):

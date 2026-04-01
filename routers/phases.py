@@ -142,6 +142,38 @@ async def stream_phase2(run_id: int):
                               headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
+# ── 후보 선택 (Phase 2→3) ────────────────────────────────────────────────────
+
+class SelectCandidateBody(BaseModel):
+    candidate_id: int
+
+
+@router.post("/api/runs/{run_id}/select-candidate")
+async def select_candidate(run_id: int, body: SelectCandidateBody):
+    db = await get_db()
+    try:
+        async with db.execute("SELECT id FROM runs WHERE id=?", (run_id,)) as cur:
+            if not await cur.fetchone():
+                raise HTTPException(status_code=404, detail="Run not found")
+        async with db.execute(
+            "SELECT id FROM prompt_candidates WHERE id=? AND run_id=?",
+            (body.candidate_id, run_id)
+        ) as cur:
+            if not await cur.fetchone():
+                raise HTTPException(status_code=404, detail="Candidate not found")
+        await db.execute(
+            "UPDATE runs SET selected_candidate_id=? WHERE id=?",
+            (body.candidate_id, run_id)
+        )
+        await db.execute(
+            "DELETE FROM dify_connections WHERE run_id=?", (run_id,)
+        )
+        await db.commit()
+        return {"ok": True, "selected_candidate_id": body.candidate_id}
+    finally:
+        await db.close()
+
+
 # ── Phase 3 ──────────────────────────────────────────────────────────────────
 
 class DifyConnectBody(BaseModel):
