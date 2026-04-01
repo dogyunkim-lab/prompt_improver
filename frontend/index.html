@@ -318,6 +318,11 @@ h1, h2, h3, h4 { font-weight: 600; }
 .delta-card.improve .dc-num { color: #40a02b; }
 .delta-card.regress .dc-num { color: #d20f39; }
 .delta-card.same .dc-num { color: #888; }
+.delta-tag { display: inline-block; padding: 1px 6px; border-radius: 4px; font-size: 10px; font-weight: 700; }
+.delta-tag.improved { background: #d5f5d0; color: #1a7f0e; }
+.delta-tag.regressed { background: #fdd; color: #c01; }
+.delta-tag.unchanged { background: #eee; color: #888; }
+.delta-tag.new-case { background: #e8f0ff; color: #4466aa; }
 
 .goal-banner {
   padding: 14px 20px; border-radius: 10px; font-size: 15px; font-weight: 700;
@@ -913,18 +918,37 @@ h1, h2, h3, h4 { font-weight: 600; }
             <h4>전체 케이스 판정 결과</h4>
             <div style="overflow-x:auto;">
               <table class="data-table" id="p5-cases-table">
+                <colgroup>
+                  <col style="width:60px">
+                  <col style="width:60px">
+                  <col style="width:110px">
+                  <col style="width:180px">
+                  <col style="width:200px">
+                  <col style="width:200px">
+                  <col style="width:200px">
+                </colgroup>
                 <thead>
                   <tr>
-                    <th style="width:80px;">ID</th>
-                    <th style="width:60px;">판정</th>
-                    <th style="width:200px;">사유</th>
+                    <th class="sortable" data-col="id">ID <span class="sort-icon">↕</span></th>
+                    <th class="sortable" data-col="judge">판정 <span class="sort-icon">↕</span></th>
+                    <th class="sortable" data-col="delta_type">변화 <span class="sort-icon">↕</span></th>
+                    <th class="sortable" data-col="reason">사유 <span class="sort-icon">↕</span></th>
                     <th>STT</th>
                     <th>Reference</th>
                     <th>Generated</th>
                   </tr>
+                  <tr>
+                    <th><input class="col-filter" data-col="id" placeholder="필터..." style="width:100%"></th>
+                    <th><input class="col-filter" data-col="judge" placeholder="필터..." style="width:100%"></th>
+                    <th><input class="col-filter" data-col="delta_type" placeholder="필터..." style="width:100%"></th>
+                    <th><input class="col-filter" data-col="reason" placeholder="필터..." style="width:100%"></th>
+                    <th><input class="col-filter" data-col="stt" placeholder="필터..." style="width:100%"></th>
+                    <th><input class="col-filter" data-col="reference" placeholder="필터..." style="width:100%"></th>
+                    <th><input class="col-filter" data-col="generated" placeholder="필터..." style="width:100%"></th>
+                  </tr>
                 </thead>
                 <tbody id="p5-cases-tbody">
-                  <tr><td colspan="6" style="text-align:center;color:#aaa;padding:20px;">데이터 없음</td></tr>
+                  <tr><td colspan="7" style="text-align:center;color:#aaa;padding:20px;">데이터 없음</td></tr>
                 </tbody>
               </table>
             </div>
@@ -1468,7 +1492,11 @@ function populateRunData() {
   if (state.p5TrendChart) { state.p5TrendChart.destroy(); state.p5TrendChart = null; }
   document.getElementById('p5-trend-notice').classList.add('hidden');
   document.getElementById('p5-regress-tbody').innerHTML = '<tr><td colspan="3" style="text-align:center;color:#aaa;padding:20px;">데이터 없음</td></tr>';
-  document.getElementById('p5-cases-tbody').innerHTML = '<tr><td colspan="6" style="text-align:center;color:#aaa;padding:20px;">데이터 없음</td></tr>';
+  state.p5Cases = [];
+  state.p5Sort = { col: null, dir: 1 };
+  state.p5Filter = { id: '', judge: '', delta_type: '', reason: '', stt: '', reference: '', generated: '' };
+  document.querySelectorAll('#p5-cases-table .col-filter').forEach(el => { el.value = ''; });
+  document.getElementById('p5-cases-tbody').innerHTML = '<tr><td colspan="7" style="text-align:center;color:#aaa;padding:20px;">데이터 없음</td></tr>';
   // Phase 6 초기화
   document.getElementById('p6-lr-badge').textContent = 'Learning Rate: —';
   document.getElementById('p6-backprop-text').textContent = 'Phase 6 실행 후 표시됩니다.';
@@ -2515,93 +2543,168 @@ function updateP5TrendChart(trend) {
   });
 }
 
+// ── Phase 5 케이스 테이블 (delta 포함) ──────────────────────────────────────
+state.p5Cases = [];
+state.p5Sort = { col: null, dir: 1 };
+state.p5Filter = { id: '', judge: '', delta_type: '', reason: '', stt: '', reference: '', generated: '' };
+
+function _deltaLabel(dt, prev, curr) {
+  if (!dt) return '<span class="delta-tag new-case">첫 Run</span>';
+  if (dt === 'improved') return `<span class="delta-tag improved">${esc(prev||'')}→${esc(curr||'')}</span>`;
+  if (dt === 'regressed') return `<span class="delta-tag regressed">${esc(prev||'')}→${esc(curr||'')}</span>`;
+  return `<span class="delta-tag unchanged">유지</span>`;
+}
+
+function _buildP5Row(c) {
+  const cls = c.judge === '오답' ? 'row-red' : c.judge === '과답' ? 'row-yellow' : '';
+  return `<tr class="p5-row ${cls}" data-caseid="${esc(c.id || '')}" style="cursor:pointer;">
+    <td>${esc(c.id || '')}</td>
+    <td>${esc(c.judge || '')}</td>
+    <td>${_deltaLabel(c.delta_type, c.prev_judge, c.judge)}</td>
+    <td class="cell-wrap">${esc(c.reason || '')}</td>
+    <td class="cell-wrap">${esc((c.stt || '').slice(0, 100))}</td>
+    <td class="cell-wrap">${esc((c.reference || '').slice(0, 100))}</td>
+    <td class="cell-wrap">${esc((c.generated || '').slice(0, 100))}</td>
+  </tr>`;
+}
+
 function renderP5Cases(cases) {
   const tbody = document.getElementById('p5-cases-tbody');
   if (!cases || !cases.length) {
-    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#aaa;padding:20px;">데이터 없음</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:#aaa;padding:20px;">데이터 없음</td></tr>';
     return;
   }
-  tbody.innerHTML = cases.map(c => {
-    const cls = c.judge === '오답' ? 'row-red' : c.judge === '과답' ? 'row-yellow' : '';
-    return `<tr class="p5-row ${cls}" data-caseid="${esc(c.id || '')}" style="cursor:pointer;">
-      <td>${esc(c.id || '')}</td>
-      <td>${esc(c.judge || '')}</td>
-      <td class="cell-wrap">${esc(c.reason || '')}</td>
-      <td class="cell-wrap">${esc((c.stt || '').slice(0, 100))}</td>
-      <td class="cell-wrap">${esc((c.reference || '').slice(0, 100))}</td>
-      <td class="cell-wrap">${esc((c.generated || '').slice(0, 100))}</td>
-    </tr>`;
-  }).join('');
+  if (!state.p5Cases.length) state.p5Cases = cases;
+  tbody.innerHTML = cases.map(c => _buildP5Row(c)).join('');
+  _bindP5RowClicks(tbody);
+}
 
-  // 클릭 확장
+function _bindP5RowClicks(tbody) {
   tbody.querySelectorAll('tr.p5-row').forEach(tr => {
-    tr.addEventListener('click', () => {
-      const caseId = tr.dataset.caseid;
-      const existing = tr.nextElementSibling;
-      if (existing && existing.classList.contains('p5-detail-row')) {
-        existing.remove();
-        tr.classList.remove('expanded');
-        return;
-      }
-      document.querySelectorAll('.p5-detail-row').forEach(el => {
-        el.previousElementSibling?.classList.remove('expanded');
-        el.remove();
-      });
-      const c = cases.find(x => String(x.id) === caseId);
-      if (!c) return;
-      tr.classList.add('expanded');
-      const fields = [
-        { label: 'ID', value: c.id || '' },
-        { label: '판정', value: c.judge || '' },
-        { label: '사유', value: c.reason || '-' },
-        { label: 'STT', value: c.stt || '-' },
-        { label: 'Reference', value: c.reference || '-' },
-        { label: 'Generated', value: c.generated || '-' },
-      ];
-      const detailTr = document.createElement('tr');
-      detailTr.className = 'p5-detail-row';
-      const detailDiv = document.createElement('div');
-      detailDiv.className = 'case-detail';
-      fields.forEach((f, i) => {
-        const field = document.createElement('div');
-        field.className = 'case-detail-field';
-        field.style.flex = '1';
-        field.style.minWidth = '60px';
-        field.innerHTML =
-          `<div class="case-detail-label">${f.label}</div>` +
-          `<div class="case-detail-value">${esc(f.value)}</div>`;
-        if (i < fields.length - 1) {
-          const handle = document.createElement('div');
-          handle.className = 'detail-col-resize';
-          handle.addEventListener('mousedown', (e) => {
-            e.preventDefault(); e.stopPropagation();
-            const startX = e.pageX;
-            const startW = field.offsetWidth;
-            handle.classList.add('active');
-            document.body.style.cursor = 'col-resize';
-            document.body.style.userSelect = 'none';
-            function onMove(ev) { field.style.width = Math.max(60, startW + (ev.pageX - startX)) + 'px'; field.style.flex = 'none'; }
-            function onUp() {
-              handle.classList.remove('active');
-              document.body.style.cursor = ''; document.body.style.userSelect = '';
-              document.removeEventListener('mousemove', onMove);
-              document.removeEventListener('mouseup', onUp);
-            }
-            document.addEventListener('mousemove', onMove);
-            document.addEventListener('mouseup', onUp);
-          });
-          field.appendChild(handle);
-        }
-        detailDiv.appendChild(field);
-      });
-      const td = document.createElement('td');
-      td.colSpan = 6;
-      td.appendChild(detailDiv);
-      detailTr.appendChild(td);
-      tr.after(detailTr);
-    });
+    tr.addEventListener('click', () => toggleP5CaseDetail(tr));
   });
 }
+
+function toggleP5CaseDetail(tr) {
+  const caseId = tr.dataset.caseid;
+  const existing = tr.nextElementSibling;
+  if (existing && existing.classList.contains('p5-detail-row')) {
+    existing.remove();
+    tr.classList.remove('expanded');
+    return;
+  }
+  document.querySelectorAll('.p5-detail-row').forEach(el => {
+    el.previousElementSibling?.classList.remove('expanded');
+    el.remove();
+  });
+  const c = state.p5Cases.find(x => String(x.id) === caseId);
+  if (!c) return;
+  tr.classList.add('expanded');
+
+  const cols = document.querySelectorAll('#p5-cases-table colgroup col');
+  const widths = Array.from(cols).map(col => col.style.width || 'auto');
+
+  const deltaText = c.delta_type === 'improved' ? `개선 (${c.prev_judge||''}→${c.judge})`
+    : c.delta_type === 'regressed' ? `회귀 (${c.prev_judge||''}→${c.judge})`
+    : c.delta_type === 'unchanged' ? `유지 (${c.prev_judge||c.judge})`
+    : '첫 Run (비교 없음)';
+
+  const fields = [
+    { label: 'ID', value: c.id || '' },
+    { label: '판정', value: c.judge || '' },
+    { label: '변화', value: deltaText },
+    { label: '사유', value: c.reason || '-' },
+    { label: 'STT', value: c.stt || '-' },
+    { label: 'Reference', value: c.reference || '-' },
+    { label: 'Generated', value: c.generated || '-' },
+  ];
+
+  const detailTr = document.createElement('tr');
+  detailTr.className = 'p5-detail-row';
+  const detailDiv = document.createElement('div');
+  detailDiv.className = 'case-detail';
+  fields.forEach((f, i) => {
+    const field = document.createElement('div');
+    field.className = 'case-detail-field';
+    field.style.width = widths[i];
+    field.style.minWidth = '60px';
+    field.style.flexShrink = '0';
+    field.innerHTML =
+      `<div class="case-detail-label">${f.label}</div>` +
+      `<div class="case-detail-value">${esc(f.value)}</div>`;
+    if (i < fields.length - 1) {
+      const handle = document.createElement('div');
+      handle.className = 'detail-col-resize';
+      handle.addEventListener('mousedown', (e) => {
+        e.preventDefault(); e.stopPropagation();
+        const startX = e.pageX;
+        const startW = field.offsetWidth;
+        handle.classList.add('active');
+        document.body.style.cursor = 'col-resize';
+        document.body.style.userSelect = 'none';
+        function onMove(ev) { field.style.width = Math.max(60, startW + (ev.pageX - startX)) + 'px'; }
+        function onUp() {
+          handle.classList.remove('active');
+          document.body.style.cursor = ''; document.body.style.userSelect = '';
+          document.removeEventListener('mousemove', onMove);
+          document.removeEventListener('mouseup', onUp);
+        }
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onUp);
+      });
+      field.appendChild(handle);
+    }
+    detailDiv.appendChild(field);
+  });
+  const td = document.createElement('td');
+  td.colSpan = 7;
+  td.appendChild(detailDiv);
+  detailTr.appendChild(td);
+  tr.after(detailTr);
+}
+
+function renderP5TableFromState() {
+  let cases = [...state.p5Cases];
+  const f = state.p5Filter;
+  cases = cases.filter(c =>
+    (!f.id         || String(c.id||'').toLowerCase().includes(f.id.toLowerCase())) &&
+    (!f.judge      || (c.judge||'').toLowerCase().includes(f.judge.toLowerCase())) &&
+    (!f.delta_type || (c.delta_type||'첫').toLowerCase().includes(f.delta_type.toLowerCase()) ||
+                      (c.prev_judge||'').toLowerCase().includes(f.delta_type.toLowerCase())) &&
+    (!f.reason     || (c.reason||'').toLowerCase().includes(f.reason.toLowerCase())) &&
+    (!f.stt        || (c.stt||'').toLowerCase().includes(f.stt.toLowerCase())) &&
+    (!f.reference  || (c.reference||'').toLowerCase().includes(f.reference.toLowerCase())) &&
+    (!f.generated  || (c.generated||'').toLowerCase().includes(f.generated.toLowerCase()))
+  );
+  const s = state.p5Sort;
+  if (s.col) {
+    cases.sort((a, b) => String(a[s.col]||'').localeCompare(String(b[s.col]||''), 'ko') * s.dir);
+  }
+  renderP5Cases(cases);
+}
+
+// Phase 5 정렬 헤더 클릭
+document.querySelectorAll('#p5-cases-table .sortable').forEach(th => {
+  th.addEventListener('click', (e) => {
+    if (e.target.classList.contains('col-resize-handle')) return;
+    const col = th.dataset.col;
+    if (state.p5Sort.col === col) {
+      state.p5Sort.dir *= -1;
+    } else {
+      state.p5Sort.col = col;
+      state.p5Sort.dir = 1;
+    }
+    renderP5TableFromState();
+  });
+});
+
+// Phase 5 필터 입력
+document.querySelectorAll('#p5-cases-table .col-filter').forEach(input => {
+  input.addEventListener('input', () => {
+    state.p5Filter[input.dataset.col] = input.value;
+    renderP5TableFromState();
+  });
+});
 
 // ════════════════════════════════════════════
 // PHASE 6

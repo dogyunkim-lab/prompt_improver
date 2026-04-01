@@ -327,7 +327,25 @@ async def get_phase5(run_id: int):
         ) as cursor:
             cases_rows = [dict(row) for row in await cursor.fetchall()]
 
+        # 케이스별 delta 조회 (이전 판정 → 현재 판정)
+        async with db.execute(
+            "SELECT case_id, prev_evaluation, curr_evaluation, delta_type FROM case_deltas WHERE to_run_id=?",
+            (run_id,)
+        ) as cursor:
+            delta_map = {r["case_id"]: dict(r) for r in await cursor.fetchall()}
+
         goal_achieved = scores["score_total"] >= 95.0
+
+        cases_with_delta = []
+        for c in cases_rows:
+            d = delta_map.get(c["case_id"])
+            cases_with_delta.append({
+                "id": c["case_id"], "judge": c["evaluation"] or "",
+                "reason": c["reason"] or "", "stt": c["stt"] or "",
+                "reference": c["reference"] or "", "generated": c["generated"] or "",
+                "prev_judge": d["prev_evaluation"] if d else None,
+                "delta_type": d["delta_type"] if d else None,
+            })
 
         # BUG-3: 프론트 기대 구조로 전면 수정
         output = {
@@ -357,12 +375,7 @@ async def get_phase5(run_id: int):
             ],
             "goal_achieved": goal_achieved,
             "gap_to_goal": round(max(0, 95.0 - scores["score_total"]), 1),
-            "cases": [
-                {"id": c["case_id"], "judge": c["evaluation"] or "",
-                 "reason": c["reason"] or "", "stt": c["stt"] or "",
-                 "reference": c["reference"] or "", "generated": c["generated"] or ""}
-                for c in cases_rows
-            ],
+            "cases": cases_with_delta,
         }
 
         await db.execute(
