@@ -1455,6 +1455,13 @@ function populateRunData() {
   const phases = state.runData.phases || {};
 
   // ── Run 전환 시 전체 UI 초기화 ──
+  // 모든 Phase 실행/중단 버튼 초기화
+  [1,2,3,4,6].forEach(n => {
+    const rb = document.getElementById(`btn-p${n}-run`);
+    if (rb) { rb.disabled = false; rb.classList.remove('hidden'); }
+    const cb = document.getElementById(`btn-p${n}-cancel`);
+    if (cb) cb.classList.add('hidden');
+  });
   // Phase 1 초기화
   document.getElementById('p1-file-name').textContent = '';
   document.getElementById('p1-upload-status').textContent = '';
@@ -1472,6 +1479,10 @@ function populateRunData() {
   // Phase 2 초기화
   const p2Summary = document.getElementById('p2-design-summary');
   if (p2Summary) p2Summary.textContent = '';
+  const p2Cards = document.getElementById('p2-candidate-cards');
+  if (p2Cards) p2Cards.innerHTML = '';
+  state.selectedCandidateId = null;
+  window._p2Candidates = null;
   // Phase 4 초기화
   ['p4-sc1','p4-sc2','p4-sc3','p4-sc4'].forEach(id => {
     const el = document.getElementById(id); if (el) el.textContent = '—';
@@ -2919,7 +2930,7 @@ async function onPhaseSSEDone(num, status) {
   if (cancelBtn) cancelBtn.classList.add('hidden');
 
   const btn = document.getElementById(`btn-p${num}-run`);
-  if (btn) btn.disabled = false;
+  if (btn) { btn.disabled = false; btn.classList.remove('hidden'); }
 
   // Phase 1 프로그레스 바 완료 처리
   if (num === 1) {
