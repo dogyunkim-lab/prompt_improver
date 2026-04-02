@@ -154,16 +154,21 @@ async def run_phase4(run_id: int) -> AsyncGenerator[str, None]:
                     done_count += 1
                     return f"error:{e}"
 
-        tasks_list = [judge_case(c) for c in cases]
-        processed = 0
-        for coro in asyncio.as_completed(tasks_list):
-            eval_result = await coro
-            processed += 1
-            if not str(eval_result).startswith("error:"):
-                yield log_event("ok", f"판정: {eval_result}")
-            else:
-                yield log_event("warn", f"Judge 실패: {eval_result}")
-            yield progress_event(processed, total)
+        pending_tasks = [asyncio.create_task(judge_case(c)) for c in cases]
+        try:
+            processed = 0
+            for coro in asyncio.as_completed(pending_tasks):
+                eval_result = await coro
+                processed += 1
+                if not str(eval_result).startswith("error:"):
+                    yield log_event("ok", f"판정: {eval_result}")
+                else:
+                    yield log_event("warn", f"Judge 실패: {eval_result}")
+                yield progress_event(processed, total)
+        finally:
+            for t in pending_tasks:
+                if not t.done():
+                    t.cancel()
 
         # 점수 집계
         scores = await aggregate_scores(run_id)

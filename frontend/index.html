@@ -1483,7 +1483,7 @@ function populateRunData() {
   // ── Run 전환 시 전체 UI 초기화 ──
   // 모든 Phase 실행/중단 버튼 초기화
   [1,2,3,4,6].forEach(n => {
-    const rb = document.getElementById(`btn-p${n}-run`);
+    const rb = document.getElementById(n === 3 ? 'btn-p3-execute' : `btn-p${n}-run`);
     if (rb) { rb.disabled = false; rb.classList.remove('hidden'); }
     const cb = document.getElementById(`btn-p${n}-cancel`);
     if (cb) cb.classList.add('hidden');
@@ -2292,16 +2292,7 @@ function checkAllDifyConnected() {
 
 document.getElementById('btn-p3-execute').addEventListener('click', async () => {
   if (state.submitting || !state.selectedRunId) return;
-  state.submitting = true;
-  document.getElementById('btn-p3-execute').disabled = true;
-  try {
-    await apiFetch(`/api/runs/${state.selectedRunId}/phase/3/execute`, { method: 'POST' });
-    connectSSE(3);
-  } catch (e) {
-    appendLog('p3-log', 'error', e.message);
-    state.submitting = false;
-    document.getElementById('btn-p3-execute').disabled = false;
-  }
+  await runPhase(3);
 });
 
 // ════════════════════════════════════════════
@@ -2863,7 +2854,7 @@ function renderTags(containerId, tags, color) {
 async function runPhase(num) {
   if (!state.selectedRunId) return;
   state.submitting = true;
-  const btn = document.getElementById(`btn-p${num}-run`);
+  const btn = document.getElementById(num === 3 ? 'btn-p3-execute' : `btn-p${num}-run`);
   const cancelBtn = document.getElementById(`btn-p${num}-cancel`);
   if (btn) { btn.disabled = true; btn.classList.add('hidden'); }
   if (cancelBtn) cancelBtn.classList.remove('hidden');
@@ -3025,7 +3016,7 @@ async function onPhaseSSEDone(num, status) {
   const cancelBtn = document.getElementById(`btn-p${num}-cancel`);
   if (cancelBtn) cancelBtn.classList.add('hidden');
 
-  const btn = document.getElementById(`btn-p${num}-run`);
+  const btn = document.getElementById(num === 3 ? 'btn-p3-execute' : `btn-p${num}-run`);
   if (btn) { btn.disabled = false; btn.classList.remove('hidden'); }
 
   // Phase 1 프로그레스 바 완료 처리

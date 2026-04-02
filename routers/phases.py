@@ -39,6 +39,11 @@ async def _run_and_queue(generator, run_id: int, phase: int):
         async for event in generator:
             await q.put(event)
     except asyncio.CancelledError:
+        # 제너레이터 명시적 종료 → 내부 finally 블록에서 pending tasks 정리
+        try:
+            await generator.aclose()
+        except Exception:
+            pass
         await q.put(_le("warn", "사용자가 Phase를 중단했습니다."))
         await q.put(_de("cancelled"))
         try:

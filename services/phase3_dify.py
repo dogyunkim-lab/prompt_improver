@@ -120,18 +120,23 @@ async def run_phase3(run_id: int) -> AsyncGenerator[str, None]:
                             errors += 1
                             return f"error:{e}"
 
-        tasks_list = [process_case(c) for c in cases]
+        pending_tasks = [asyncio.create_task(process_case(c)) for c in cases]
 
-        done_count = 0
-        for coro in asyncio.as_completed(tasks_list):
-            result_str = await coro
-            done_count += 1
-            if result_str.startswith("ok:"):
-                elapsed = result_str.split(":")[1]
-                yield log_event("ok", f"완료 ({elapsed}s)")
-            else:
-                yield log_event("warn", f"실패: {result_str.split(':', 1)[1]}")
-            yield progress_event(done_count, total)
+        try:
+            done_count = 0
+            for coro in asyncio.as_completed(pending_tasks):
+                result_str = await coro
+                done_count += 1
+                if result_str.startswith("ok:"):
+                    elapsed = result_str.split(":")[1]
+                    yield log_event("ok", f"완료 ({elapsed}s)")
+                else:
+                    yield log_event("warn", f"실패: {result_str.split(':', 1)[1]}")
+                yield progress_event(done_count, total)
+        finally:
+            for t in pending_tasks:
+                if not t.done():
+                    t.cancel()
 
         msg = f"{total}개 케이스 완료 (오류: {errors}건)"
         yield log_event("ok" if errors == 0 else "warn", msg)
