@@ -182,16 +182,23 @@ async def run_phase4(run_id: int) -> AsyncGenerator[str, None]:
         await db.commit()
 
         # Delta 계산 (이전 완료 Run이 있으면)
-        async with db.execute(
-            """SELECT id FROM runs WHERE task_id=? AND id != ? AND status IN ('completed','phase4_done','phase5_done','phase6_done')
-               ORDER BY run_number DESC LIMIT 1""",
-            (run["task_id"], run_id)
-        ) as cursor:
-            prev_row = await cursor.fetchone()
+        # 1순위: base_run_id (continue 모드), 2순위: 가장 최근 완료 Run
+        prev_run_id = None
+        if run.get("base_run_id"):
+            prev_run_id = run["base_run_id"]
+        else:
+            async with db.execute(
+                """SELECT id FROM runs WHERE task_id=? AND id != ? AND status IN ('completed','phase4_done','phase5_done','phase6_done')
+                   ORDER BY run_number DESC LIMIT 1""",
+                (run["task_id"], run_id)
+            ) as cursor:
+                prev_row = await cursor.fetchone()
+            if prev_row:
+                prev_run_id = prev_row["id"]
 
-        if prev_row:
-            yield log_event("info", "케이스별 Delta 계산 중...")
-            await compute_and_save_deltas(run["task_id"], prev_row["id"], run_id)
+        if prev_run_id:
+            yield log_event("info", f"케이스별 Delta 계산 중... (비교 대상: Run #{prev_run_id})")
+            await compute_and_save_deltas(run["task_id"], prev_run_id, run_id)
             yield log_event("ok", "Delta 계산 완료")
 
         # BUG-2: 프론트 기대 필드명으로 변환 (correct_plus_over, correct, over, wrong, total)

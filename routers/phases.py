@@ -12,7 +12,7 @@ from services.phase2_design import run_phase2
 from services.phase3_dify import run_phase3, verify_dify_connection  # noqa
 from services.phase4_judge import run_phase4
 from services.phase6_strategy import run_phase6
-from services.delta import aggregate_scores
+from services.delta import aggregate_scores, compute_and_save_deltas
 
 logger = logging.getLogger(__name__)
 
@@ -310,6 +310,31 @@ async def get_phase5(run_id: int):
                 for r in await cursor.fetchall()
             ]
 
+        # Delta가 없으면 on-the-fly 계산 (Phase 4에서 누락된 경우 보완)
+        async with db.execute(
+            "SELECT COUNT(*) as cnt FROM case_deltas WHERE to_run_id=?", (run_id,)
+        ) as cursor:
+            delta_exists = (await cursor.fetchone())["cnt"] > 0
+
+        if not delta_exists:
+            # 이전 Run 탐색: 1순위 base_run_id, 2순위 가장 최근 완료 Run
+            prev_run_id = None
+            if run.get("base_run_id"):
+                prev_run_id = run["base_run_id"]
+            else:
+                async with db.execute(
+                    """SELECT id FROM runs WHERE task_id=? AND id != ?
+                       AND status IN ('completed','phase4_done','phase5_done','phase6_done')
+                       ORDER BY run_number DESC LIMIT 1""",
+                    (run["task_id"], run_id)
+                ) as cursor:
+                    prev_row = await cursor.fetchone()
+                if prev_row:
+                    prev_run_id = prev_row["id"]
+            if prev_run_id:
+                logger.info(f"Phase 5: Run {run_id}의 Delta 없음 — Run {prev_run_id}과 비교하여 on-the-fly 계산")
+                await compute_and_save_deltas(run["task_id"], prev_run_id, run_id)
+
         async with db.execute(
             "SELECT delta_type, COUNT(*) as cnt FROM case_deltas WHERE to_run_id=? GROUP BY delta_type",
             (run_id,)
@@ -377,7 +402,7 @@ async def get_phase5(run_id: int):
             },
             "trend": {
                 "labels": [f"Run {r['run_number']}" for r in task_history],
-                "values": [round((r["score_total"] or 0) * 100, 1) for r in task_history],
+                "values": [r["score_total"] for r in task_history],
             },
             "regressed_cases": [
                 {

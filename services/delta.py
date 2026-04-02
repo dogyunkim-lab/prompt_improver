@@ -78,21 +78,34 @@ async def compute_and_save_deltas(task_id: int, prev_run_id: int, curr_run_id: i
         ) as cursor:
             curr_rows = {row["case_id"]: dict(row) for row in await cursor.fetchall()}
 
+        # 기존 delta 삭제 후 재계산 (중복 방지)
+        await db.execute(
+            "DELETE FROM case_deltas WHERE to_run_id=?", (curr_run_id,)
+        )
+
+        POSITIVE = {"정답", "과답"}
+
         for case_id, curr in curr_rows.items():
-            prev_eval = prev_rows.get(case_id, {}).get("evaluation", "없음")
-            curr_eval = curr["evaluation"]
+            prev_eval = prev_rows.get(case_id, {}).get("evaluation") or "없음"
+            curr_eval = curr["evaluation"] or "없음"
+
+            prev_good = prev_eval in POSITIVE
+            curr_good = curr_eval in POSITIVE
 
             if prev_eval == curr_eval:
                 delta_type = "unchanged"
-            elif curr_eval in ("정답", "과답") and prev_eval == "오답":
+            elif not prev_good and curr_good:
+                # 오답/평가실패/없음 → 정답/과답: 개선
                 delta_type = "improved"
-            elif curr_eval == "오답" and prev_eval in ("정답", "과답"):
+            elif prev_good and not curr_good:
+                # 정답/과답 → 오답/평가실패: 회귀
                 delta_type = "regressed"
             else:
+                # 둘 다 positive 내 이동(정답↔과답) 또는 둘 다 negative 내 이동
                 delta_type = "unchanged"
 
             await db.execute(
-                """INSERT OR REPLACE INTO case_deltas
+                """INSERT INTO case_deltas
                    (task_id, case_id, from_run_id, to_run_id, prev_evaluation, curr_evaluation, delta_type)
                    VALUES (?,?,?,?,?,?,?)""",
                 (task_id, case_id, prev_run_id, curr_run_id, prev_eval, curr_eval, delta_type)
