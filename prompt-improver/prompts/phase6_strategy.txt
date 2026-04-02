@@ -1,0 +1,63 @@
+너는 프롬프트 최적화 전략가다. 아래 실험 이력을 분석하여
+다음 iteration에서 취할 전략을 수립하라.
+
+[핵심 원칙 — 반드시 상기하라]
+요약 Task: "{generation_task}"
+이 Task의 요약은 범용적 요약이 아니다. 상담사가 작성한 Reference가 정답 기준이며,
+LLM Judge는 Reference와 Generated를 비교하여 판정한다.
+정답률을 올리려면 LLM이 요약 Task의 목적에 맞는 핵심 내용을
+Reference와 동일하게 요약하도록 프롬프트를 개선해야 한다.
+"Reference가 담고 있는 핵심 내용을 LLM도 동일하게 요약하는가"가 유일한 기준이다.
+
+[현재 Run에서 사용된 워크플로우 프롬프트]
+{current_prompt}
+
+[Phase 1에서 분석된 Reference 요약 기준]
+{reference_summary_criteria}
+
+[목표]: 정답 + 과답 >= 95%
+[현재 점수]: {current_score}%
+[Learning rate]: {learning_rate}
+  - explore: 첫 실험, 제약 없음
+  - major: 완전히 새로운 구조 시도 (현재 프롬프트 버리기)
+  - medium: 요소 재조합 허용
+  - minor: 현재 프롬프트에서 최대 2문장만 수정
+
+[전체 실험 이력]
+{experiment_history}
+
+[케이스별 Delta 분석]
+{delta_analysis}
+
+[회귀 케이스 분석]
+{regression_analysis}
+
+[지시]
+1. 위 [현재 Run에서 사용된 워크플로우 프롬프트]를 기반으로 분석하라.
+   이 프롬프트의 어떤 지시가 효과적이었고, 어떤 지시가 부족/과잉이었는지 구체적으로 평가하라.
+
+2. Delta를 역추적하여 어떤 프롬프트 요소/노드가 개선에 기여했고
+   어떤 변경이 회귀를 일으켰는지 구체적으로 분석하라.
+   반드시 케이스 ID를 인용하여 근거를 제시하라.
+
+3. [Reference 요약 기준]과 비교하여, 현재 프롬프트가 해당 기준을 LLM에게
+   충분히 전달하고 있는지 평가하라. 어떤 요약 기준이 프롬프트에서 누락되었거나
+   불충분하게 표현되어 있는지 구체적으로 지적하라.
+
+4. Learning rate에 따라 허용된 변경 폭 내에서만 다음 전략을 제안하라.
+   "이번에는 다르게 해보겠다"는 근거 없는 시도는 금지한다.
+
+5. local optimum 탈출이 필요하다면 (learning_rate=major),
+   지금까지 시도하지 않은 완전히 다른 구조를 제안하라.
+   예: 다른 노드 수, 다른 역할 분담, 다른 모델 조합 등.
+
+[출력 형식 - JSON만 출력]
+{{
+  "strategy_type": "explore|major|medium|minor",
+  "backprop_analysis": "케이스 레벨 delta 역추적 분석 텍스트",
+  "effective_elements": ["효과 있었던 요소 목록"],
+  "harmful_elements": ["회귀 유발 요소 목록"],
+  "next_direction": "다음 iteration 프롬프트 방향 상세 서술",
+  "constraints": "변경 시 반드시 유지해야 할 요소",
+  "expected_improvement": "예상 개선 케이스 및 이유"
+}}

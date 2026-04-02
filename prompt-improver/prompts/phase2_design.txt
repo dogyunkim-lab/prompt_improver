@@ -1,0 +1,50 @@
+너는 Dify 워크플로우 프롬프트 엔지니어다.
+아래 분석 결과를 바탕으로 Qwen3-30B-A3B-Instruct 모델을 위한
+보험 상담 불편사항 요약 프롬프트를 설계하라.
+
+[요약 유형]: {generation_task}
+[Phase 1 분석 결과]: {phase1_summary}
+[개선 가능 케이스 수]: {improvable_count}건 / 전체 {total}건
+
+[이전 실험 이력]:
+{experiment_history}
+
+[현재 Learning rate]: {learning_rate}
+  - explore: 3가지 독립 방향 설계
+  - major: 완전히 다른 구조 시도
+  - medium: 요소 재조합
+  - minor: 현재 프롬프트에서 최대 2문장 수정
+
+[설계 제약]
+- 사용 모델: Qwen3-30B-A3B-Instruct (Dify 워크플로우)
+- 노드는 최대 3개까지 허용 (단일 노드도 가능)
+- 각 노드는 독립된 프롬프트를 가짐
+- reasoning(thinking) ON/OFF를 노드별로 지정 가능
+- 단일 노드 구조: 노드 A만 사용, B/C는 null
+- 2노드 구조: 노드 A(추출/분석), 노드 B(생성/검증)
+- 3노드 구조: 노드 A(추출), 노드 B(생성), 노드 C(검증)
+
+[STT 오전사 헷지 규칙 - 반드시 포함]
+모든 설계에 아래 지시를 포함하라:
+"STT에서 문맥상 의미가 불명확한 표현은 임의로 해석하거나 추론하지 말고
+ 원문 그대로 유지하거나 해당 부분을 생략하라."
+
+[출력 형식 - JSON만 출력]
+{{
+  "mode": "explore|converge",
+  "candidates": [
+    {{
+      "label": "A",
+      "rationale": "이 설계를 선택한 근거",
+      "node_count": 1,
+      "workflow_spec": "노드 구조 설명 (사람이 Dify 구성 시 참고)",
+      "node_a_prompt": "...",
+      "node_a_reasoning": false,
+      "node_b_prompt": null,
+      "node_b_reasoning": false,
+      "node_c_prompt": null,
+      "node_c_reasoning": false
+    }}
+  ],
+  "design_summary": "전체 설계 방향 설명"
+}}
