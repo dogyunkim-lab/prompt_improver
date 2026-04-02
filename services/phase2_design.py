@@ -40,6 +40,10 @@ def _build_candidates_with_nodes(saved_candidates: list) -> list:
                 node_prompts.append({
                     "label": label,
                     "content": cand[content_key],
+                    "system_prompt": cand.get(f"node_{label.lower()}_system_prompt") or "",
+                    "user_prompt": cand.get(f"node_{label.lower()}_user_prompt") or "",
+                    "input_vars": json.loads(cand.get(f"node_{label.lower()}_input_vars") or "[]"),
+                    "output_var": cand.get(f"node_{label.lower()}_output_var") or "",
                     "reasoning": bool(cand.get(reason_key)),
                 })
         result.append({
@@ -88,11 +92,11 @@ async def _mark_phase_failed(run_id: int, phase: int):
 # ─── Step 0: converge 모드 이전 최적 프롬프트 조회 ──────────────────────────
 
 async def _get_best_previous_candidates(task_id: int, current_run_id: int) -> str:
-    """이전 최고 score_total run의 prompt_candidates를 텍스트로 반환."""
+    """이전 최고 score_total run의 prompt_candidates를 system/user 분리하여 텍스트로 반환."""
     db = await get_db()
     try:
         async with db.execute(
-            """SELECT id, run_number, score_total FROM runs
+            """SELECT id, run_number, score_total, selected_candidate_id FROM runs
                WHERE task_id=? AND id != ? AND score_total IS NOT NULL
                AND status IN ('completed','phase4_done','phase5_done','phase6_done')
                ORDER BY score_total DESC LIMIT 1""",
@@ -104,11 +108,20 @@ async def _get_best_previous_candidates(task_id: int, current_run_id: int) -> st
             return ""
 
         best_run = dict(best_run)
-        async with db.execute(
-            "SELECT * FROM prompt_candidates WHERE run_id=? ORDER BY candidate_label",
-            (best_run["id"],)
-        ) as cursor:
-            candidates = [dict(row) for row in await cursor.fetchall()]
+
+        # 선택된 후보만 반환 (없으면 전체)
+        if best_run.get("selected_candidate_id"):
+            async with db.execute(
+                "SELECT * FROM prompt_candidates WHERE id=?",
+                (best_run["selected_candidate_id"],)
+            ) as cursor:
+                candidates = [dict(row) for row in await cursor.fetchall()]
+        else:
+            async with db.execute(
+                "SELECT * FROM prompt_candidates WHERE run_id=? ORDER BY candidate_label",
+                (best_run["id"],)
+            ) as cursor:
+                candidates = [dict(row) for row in await cursor.fetchall()]
 
         if not candidates:
             return ""
@@ -117,9 +130,30 @@ async def _get_best_previous_candidates(task_id: int, current_run_id: int) -> st
         for c in candidates:
             lines.append(f"\n후보 {c['candidate_label']} (node_count={c['node_count']}):")
             for label in NODE_LABELS:
-                key = f"node_{label.lower()}_prompt"
-                if c.get(key):
-                    lines.append(f"  노드 {label}: {c[key][:200]}...")
+                lbl = label.lower()
+                prompt_key = f"node_{lbl}_prompt"
+                if not c.get(prompt_key):
+                    continue
+                sys_p = c.get(f"node_{lbl}_system_prompt") or ""
+                usr_p = c.get(f"node_{lbl}_user_prompt") or ""
+                output_var = c.get(f"node_{lbl}_output_var") or ""
+                input_vars = c.get(f"node_{lbl}_input_vars") or "[]"
+                reasoning = "ON" if c.get(f"node_{lbl}_reasoning") else "OFF"
+
+                header = f"  노드 {label} (reasoning: {reasoning}"
+                if output_var:
+                    header += f", output: {output_var}"
+                if input_vars and input_vars != "[]":
+                    header += f", input: {input_vars}"
+                header += "):"
+                lines.append(header)
+
+                if sys_p:
+                    lines.append(f"    [SYSTEM] {sys_p}")
+                if usr_p:
+                    lines.append(f"    [USER] {usr_p}")
+                if not sys_p and not usr_p:
+                    lines.append(f"    {c[prompt_key]}")
         return "\n".join(lines)
     finally:
         await db.close()
@@ -127,35 +161,109 @@ async def _get_best_previous_candidates(task_id: int, current_run_id: int) -> st
 
 # ─── Step 0-b: 이전 Run Phase 6 피드백 조회 ──────────────────────────────────
 
-async def _get_prev_run_feedback(base_run_id: int) -> str:
-    """이전 Run의 Phase 6 output_data에서 next_direction, effective, harmful 텍스트를 조합."""
+def _parse_phase6_output(output_data: str) -> str:
+    """Phase 6 output_data JSON에서 피드백 텍스트를 추출."""
+    try:
+        p6 = json.loads(output_data)
+    except Exception:
+        return ""
+
+    parts = []
+
+    # backprop: 케이스 레벨 delta 귀인 분석 (가장 상세한 인과 분석)
+    backprop = p6.get("backprop", "")
+    if backprop:
+        parts.append(f"[이전 Run Phase 6 — 프롬프트 변경→결과 인과 분석]\n{backprop}")
+
+    next_dir = p6.get("next_direction", "")
+    if next_dir:
+        parts.append(f"[이전 Run Phase 6 — 다음 방향]\n{next_dir}")
+
+    effective = p6.get("effective", [])
+    if effective:
+        parts.append("[효과적 요소]\n" + "\n".join(f"- {e}" for e in effective))
+
+    harmful = p6.get("harmful", [])
+    if harmful:
+        parts.append("[해로운 요소]\n" + "\n".join(f"- {h}" for h in harmful))
+
+    constraints = p6.get("constraints", "")
+    if constraints:
+        parts.append(f"[반드시 유지할 요소]\n{constraints}")
+
+    return "\n\n".join(parts)
+
+
+async def _get_prev_run_feedback(base_run_id: int, task_id: int) -> tuple[str, int | None]:
+    """이전 Run의 Phase 6 피드백을 가져온다.
+
+    Returns:
+        (feedback_text, source_run_id) — 피드백을 찾은 Run ID를 함께 반환.
+        피드백이 없으면 ("", None).
+
+    탐색 순서:
+      1순위: base_run_id의 Phase 6 (직접 이전 Run)
+      2순위: base_run_id 체인을 따라 올라감 (base_run_id의 base_run_id → ...)
+      3순위: 같은 Task에서 가장 최근 완료된 Phase 6
+    """
     db = await get_db()
     try:
+        # 1순위: base_run_id의 Phase 6
         async with db.execute(
             "SELECT output_data FROM phase_results WHERE run_id=? AND phase=6 AND status='completed'",
             (base_run_id,)
         ) as cursor:
             row = await cursor.fetchone()
 
-        if not row or not row["output_data"]:
-            return ""
+        if row and row["output_data"]:
+            feedback = _parse_phase6_output(row["output_data"])
+            if feedback:
+                return feedback, base_run_id
 
-        p6 = json.loads(row["output_data"])
-        parts = []
+        logger.info(f"base_run_id={base_run_id}의 Phase 6 피드백이 비어있음 — 체인/폴백 탐색 시작")
 
-        next_dir = p6.get("next_direction", "")
-        if next_dir:
-            parts.append(f"[이전 Run Phase 6 — 다음 방향]\n{next_dir}")
+        # 2순위: base_run_id 체인을 따라 올라감 (최대 10단계)
+        current_id = base_run_id
+        for _ in range(10):
+            async with db.execute(
+                "SELECT base_run_id FROM runs WHERE id=?", (current_id,)
+            ) as cursor:
+                chain_row = await cursor.fetchone()
+            if not chain_row or not chain_row["base_run_id"]:
+                break
+            ancestor_id = chain_row["base_run_id"]
+            async with db.execute(
+                "SELECT output_data FROM phase_results WHERE run_id=? AND phase=6 AND status='completed'",
+                (ancestor_id,)
+            ) as cursor:
+                ancestor_row = await cursor.fetchone()
+            if ancestor_row and ancestor_row["output_data"]:
+                feedback = _parse_phase6_output(ancestor_row["output_data"])
+                if feedback:
+                    logger.info(f"체인 상위 Run #{ancestor_id}에서 Phase 6 피드백 발견")
+                    return feedback, ancestor_id
+            current_id = ancestor_id
 
-        effective = p6.get("effective", [])
-        if effective:
-            parts.append(f"[효과적 요소]\n" + "\n".join(f"- {e}" for e in effective))
+        # 3순위: 같은 Task에서 가장 최근 완료된 Phase 6 (base_run_id 제외)
+        async with db.execute(
+            """SELECT pr.run_id, pr.output_data
+               FROM phase_results pr
+               JOIN runs r ON r.id = pr.run_id
+               WHERE r.task_id=? AND pr.phase=6 AND pr.status='completed'
+               ORDER BY r.run_number DESC LIMIT 5""",
+            (task_id,)
+        ) as cursor:
+            fallback_rows = await cursor.fetchall()
 
-        harmful = p6.get("harmful", [])
-        if harmful:
-            parts.append(f"[해로운 요소]\n" + "\n".join(f"- {h}" for h in harmful))
+        for fb_row in fallback_rows:
+            if fb_row["output_data"]:
+                feedback = _parse_phase6_output(fb_row["output_data"])
+                if feedback:
+                    logger.info(f"폴백: Task 내 Run #{fb_row['run_id']}에서 Phase 6 피드백 발견")
+                    return feedback, fb_row["run_id"]
 
-        return "\n\n".join(parts)
+        logger.warning(f"Task {task_id}에서 유효한 Phase 6 피드백을 찾지 못함")
+        return "", None
     finally:
         await db.close()
 
@@ -362,7 +470,13 @@ def _validate_candidate(candidate: dict) -> list:
     existing_labels = set()
     for n in nodes:
         lbl = n.get("node_label", "")
-        if lbl and n.get("prompt", "").strip():
+        # system_prompt 또는 user_prompt가 있으면 prompt로 인정 (하위 호환)
+        has_prompt = (
+            n.get("prompt", "").strip()
+            or n.get("system_prompt", "").strip()
+            or n.get("user_prompt", "").strip()
+        )
+        if lbl and has_prompt:
             existing_labels.add(lbl)
 
     return [lbl for lbl in expected_labels if lbl not in existing_labels]
@@ -375,9 +489,13 @@ async def _repair_candidate(
     # 기존 노드 텍스트 구성
     existing_text_parts = []
     for n in candidate.get("nodes", []):
-        if n.get("prompt", "").strip():
+        sys_p = n.get("system_prompt", "")
+        usr_p = n.get("user_prompt", "")
+        prompt_text = n.get("prompt", "")
+        display = (sys_p + "\n" + usr_p).strip() if sys_p or usr_p else prompt_text
+        if display.strip():
             existing_text_parts.append(
-                f"노드 {n['node_label']}: {n['prompt'][:300]}..."
+                f"노드 {n['node_label']}: {display[:300]}..."
             )
     existing_nodes_text = "\n".join(existing_text_parts) if existing_text_parts else "(없음)"
 
@@ -402,7 +520,12 @@ async def _repair_candidate(
         existing_map = {n["node_label"]: n for n in candidate["nodes"] if n.get("node_label")}
         for rn in repaired:
             lbl = rn.get("node_label", "")
-            if lbl in missing_labels and rn.get("prompt", "").strip():
+            has_prompt = (
+                rn.get("prompt", "").strip()
+                or rn.get("system_prompt", "").strip()
+                or rn.get("user_prompt", "").strip()
+            )
+            if lbl in missing_labels and has_prompt:
                 existing_map[lbl] = rn
 
         # 올바른 순서로 재조립
@@ -421,32 +544,51 @@ async def _repair_candidate(
 async def _save_candidate_to_db(
     db, run_id: int, candidate: dict, design_mode: str
 ) -> None:
-    """nodes[] 배열 → 기존 flat 컬럼 변환 후 DB 저장."""
+    """nodes[] 배열 → 기존 flat 컬럼 + 신규 system/user 컬럼 변환 후 DB 저장."""
     nodes = candidate.get("nodes", [])
 
-    # flat 컬럼 매핑
-    node_prompts = {"a": None, "b": None, "c": None}
-    node_reasoning = {"a": 0, "b": 0, "c": 0}
+    # flat 컬럼 매핑 (기존 + 신규)
+    fields = {l: {} for l in ("a", "b", "c")}
     for n in nodes:
         lbl = n.get("node_label", "").lower()
-        if lbl in node_prompts:
-            node_prompts[lbl] = n.get("prompt")
-            node_reasoning[lbl] = 1 if n.get("reasoning") else 0
+        if lbl in fields:
+            sys_p = n.get("system_prompt", "")
+            usr_p = n.get("user_prompt", "")
+            # 하위 호환: node_x_prompt = system + user 결합
+            combined = (sys_p + "\n\n" + usr_p).strip() if sys_p or usr_p else n.get("prompt", "")
+            fields[lbl] = {
+                "prompt": combined,
+                "system_prompt": sys_p,
+                "user_prompt": usr_p,
+                "input_vars": json.dumps(n.get("input_vars", []), ensure_ascii=False),
+                "output_var": n.get("output_var", ""),
+                "reasoning": 1 if n.get("reasoning") else 0,
+            }
 
     await db.execute(
         """INSERT INTO prompt_candidates
            (run_id, candidate_label, mode, workflow_spec, node_count,
             node_a_prompt, node_b_prompt, node_c_prompt,
+            node_a_system_prompt, node_a_user_prompt, node_a_input_vars, node_a_output_var,
+            node_b_system_prompt, node_b_user_prompt, node_b_input_vars, node_b_output_var,
+            node_c_system_prompt, node_c_user_prompt, node_c_input_vars, node_c_output_var,
             node_a_reasoning, node_b_reasoning, node_c_reasoning, design_rationale)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+           VALUES (?,?,?,?,?, ?,?,?, ?,?,?,?, ?,?,?,?, ?,?,?,?, ?,?,?, ?)""",
         (
             run_id,
             candidate.get("label", "A"),
             design_mode,
             "",  # workflow_spec — 전략에서 별도로 안 씀
             candidate.get("node_count", 1),
-            node_prompts["a"], node_prompts["b"], node_prompts["c"],
-            node_reasoning["a"], node_reasoning["b"], node_reasoning["c"],
+            fields["a"].get("prompt"), fields["b"].get("prompt"), fields["c"].get("prompt"),
+            fields["a"].get("system_prompt"), fields["a"].get("user_prompt"),
+            fields["a"].get("input_vars"), fields["a"].get("output_var"),
+            fields["b"].get("system_prompt"), fields["b"].get("user_prompt"),
+            fields["b"].get("input_vars"), fields["b"].get("output_var"),
+            fields["c"].get("system_prompt"), fields["c"].get("user_prompt"),
+            fields["c"].get("input_vars"), fields["c"].get("output_var"),
+            fields["a"].get("reasoning", 0), fields["b"].get("reasoning", 0),
+            fields["c"].get("reasoning", 0),
             candidate.get("rationale", ""),
         )
     )
@@ -517,9 +659,16 @@ async def run_phase2(run_id: int) -> AsyncGenerator[str, None]:
         # 이전 Run 피드백 조회 (continue 모드)
         prev_run_feedback = ""
         if run.get("base_run_id"):
-            prev_run_feedback = await _get_prev_run_feedback(run["base_run_id"])
+            prev_run_feedback, feedback_source_run = await _get_prev_run_feedback(
+                run["base_run_id"], run["task_id"]
+            )
             if prev_run_feedback:
-                yield log_event("info", f"이전 Run #{run['base_run_id']} 피드백 주입됨")
+                if feedback_source_run == run["base_run_id"]:
+                    yield log_event("info", f"이전 Run #{feedback_source_run} Phase 6 피드백 주입됨")
+                else:
+                    yield log_event("info", f"이전 Run #{run['base_run_id']}의 Phase 6 없음 → Run #{feedback_source_run} 피드백으로 대체")
+            else:
+                yield log_event("warn", f"이전 Run #{run['base_run_id']} 및 Task 내 Phase 6 피드백을 찾을 수 없습니다")
 
         # 사용자 전략 가이드
         user_guide = run.get("user_guide") or ""
@@ -615,7 +764,9 @@ async def run_phase2(run_id: int) -> AsyncGenerator[str, None]:
                     # node_count를 실제 수로 하향 조정
                     actual_count = len([
                         n for n in repaired.get("nodes", [])
-                        if n.get("prompt", "").strip()
+                        if (n.get("prompt", "").strip()
+                            or n.get("system_prompt", "").strip()
+                            or n.get("user_prompt", "").strip())
                     ])
                     if actual_count > 0:
                         repaired["node_count"] = actual_count

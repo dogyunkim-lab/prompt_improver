@@ -25,6 +25,101 @@ def _extract_json(text: str) -> dict:
     return {}
 
 
+def _format_candidate_prompt(cand: dict) -> str:
+    """후보의 프롬프트를 system/user 구분 + 입출력 변수 포함하여 포맷."""
+    parts = []
+    for label in ["a", "b", "c"]:
+        prompt = cand.get(f"node_{label}_prompt")
+        if not prompt:
+            continue
+        sys_p = cand.get(f"node_{label}_system_prompt") or ""
+        usr_p = cand.get(f"node_{label}_user_prompt") or ""
+        reasoning = "ON" if cand.get(f"node_{label}_reasoning") else "OFF"
+        output_var = cand.get(f"node_{label}_output_var") or ""
+        input_vars = cand.get(f"node_{label}_input_vars") or "[]"
+
+        header = f"[노드 {label.upper()} (reasoning: {reasoning}"
+        if output_var:
+            header += f", output: {output_var}"
+        if input_vars and input_vars != "[]":
+            header += f", input: {input_vars}"
+        header += ")]"
+
+        if sys_p:
+            header += f"\n  [SYSTEM]\n{sys_p}"
+        if usr_p:
+            header += f"\n  [USER]\n{usr_p}"
+        if not sys_p and not usr_p:
+            header += f"\n{prompt}"
+        parts.append(header)
+    return "\n\n".join(parts) if parts else "(프롬프트 없음)"
+
+
+def _build_prompt_diff(prev_cand: dict | None, curr_cand: dict | None) -> str:
+    """두 후보 간 구조적 차이를 요약."""
+    if not prev_cand:
+        return "(이전 프롬프트 없음 — 첫 실험)"
+    if not curr_cand:
+        return "(현재 프롬프트 없음)"
+
+    diff = []
+    prev_count = prev_cand.get("node_count", 1)
+    curr_count = curr_cand.get("node_count", 1)
+
+    if prev_count != curr_count:
+        diff.append(f"* 노드 수: {prev_count}개 → {curr_count}개")
+    else:
+        diff.append(f"* 노드 수: {curr_count}개 (동일)")
+
+    for label in ["a", "b", "c"]:
+        prev_p = prev_cand.get(f"node_{label}_prompt")
+        curr_p = curr_cand.get(f"node_{label}_prompt")
+        L = label.upper()
+
+        if not prev_p and not curr_p:
+            continue
+        elif prev_p and not curr_p:
+            diff.append(f"* 노드 {L}: 제거됨")
+        elif not prev_p and curr_p:
+            diff.append(f"* 노드 {L}: 새로 추가됨")
+        else:
+            changes = []
+            prev_r = bool(prev_cand.get(f"node_{label}_reasoning"))
+            curr_r = bool(curr_cand.get(f"node_{label}_reasoning"))
+            if prev_r != curr_r:
+                changes.append(f"reasoning {'ON→OFF' if prev_r else 'OFF→ON'}")
+            prev_ov = prev_cand.get(f"node_{label}_output_var") or ""
+            curr_ov = curr_cand.get(f"node_{label}_output_var") or ""
+            if prev_ov != curr_ov:
+                changes.append(f"output_var '{prev_ov}'→'{curr_ov}'")
+            if prev_p.strip() != curr_p.strip():
+                changes.append("프롬프트 텍스트 수정됨")
+            if changes:
+                diff.append(f"* 노드 {L}: {', '.join(changes)}")
+            else:
+                diff.append(f"* 노드 {L}: 변경 없음")
+
+    return "\n".join(diff)
+
+
+def _format_intermediate(io_raw: str | None) -> str:
+    """intermediate_outputs JSON 문자열을 노드별 읽기 좋은 텍스트로 변환."""
+    if not io_raw:
+        return "(없음)"
+    try:
+        io = json.loads(io_raw)
+    except Exception:
+        return io_raw[:300]
+    parts = []
+    for var_name, info in io.items():
+        if isinstance(info, dict) and "node" in info:
+            content = (info.get("content") or "")[:200]
+            parts.append(f"  [Node {info['node']}] {var_name}: {content}")
+        else:
+            parts.append(f"  {var_name}: {str(info)[:200]}")
+    return "\n".join(parts) if parts else "(없음)"
+
+
 async def run_phase6(run_id: int) -> AsyncGenerator[str, None]:
     db = await get_db()
     try:
@@ -38,6 +133,7 @@ async def run_phase6(run_id: int) -> AsyncGenerator[str, None]:
 
         # 현재 Run에서 사용된 워크플로우 프롬프트 조회
         current_prompt_text = "(프롬프트 정보 없음)"
+        curr_cand_dict = None
         selected_cand_id = run.get("selected_candidate_id")
         if selected_cand_id:
             async with db.execute(
@@ -45,14 +141,50 @@ async def run_phase6(run_id: int) -> AsyncGenerator[str, None]:
             ) as cursor:
                 cand_row = await cursor.fetchone()
             if cand_row:
-                cand = dict(cand_row)
-                prompt_parts = []
-                for label in ["a", "b", "c"]:
-                    p = cand.get(f"node_{label}_prompt")
-                    if p:
-                        reasoning = "ON" if cand.get(f"node_{label}_reasoning") else "OFF"
-                        prompt_parts.append(f"[노드 {label.upper()} (reasoning: {reasoning})]\n{p}")
-                current_prompt_text = "\n\n".join(prompt_parts) if prompt_parts else "(프롬프트 내용 없음)"
+                curr_cand_dict = dict(cand_row)
+                current_prompt_text = _format_candidate_prompt(curr_cand_dict)
+
+        # 이전 Run 프롬프트 조회 (실험 연속성을 위한 비교 대상)
+        prev_run_id = None
+        prev_cand_dict = None
+        previous_prompt_text = "(이전 프롬프트 없음 — 첫 실험)"
+        # 1순위: base_run_id (continue 모드), 2순위: 가장 최근 완료 Run
+        if run.get("base_run_id"):
+            prev_run_id = run["base_run_id"]
+        else:
+            async with db.execute(
+                """SELECT id FROM runs WHERE task_id=? AND id != ?
+                   AND status IN ('completed','phase4_done','phase5_done','phase6_done')
+                   ORDER BY run_number DESC LIMIT 1""",
+                (run["task_id"], run_id)
+            ) as cursor:
+                prev_row = await cursor.fetchone()
+            if prev_row:
+                prev_run_id = prev_row["id"]
+
+        if prev_run_id:
+            async with db.execute(
+                "SELECT selected_candidate_id, run_number, score_total FROM runs WHERE id=?",
+                (prev_run_id,)
+            ) as cursor:
+                prev_run_row = await cursor.fetchone()
+            if prev_run_row and prev_run_row["selected_candidate_id"]:
+                async with db.execute(
+                    "SELECT * FROM prompt_candidates WHERE id=?",
+                    (prev_run_row["selected_candidate_id"],)
+                ) as cursor:
+                    prev_cand_row = await cursor.fetchone()
+                if prev_cand_row:
+                    prev_cand_dict = dict(prev_cand_row)
+                    prev_score = round((prev_run_row["score_total"] or 0) * 100, 1)
+                    previous_prompt_text = (
+                        f"[이전 Run #{prev_run_row['run_number']} — score: {prev_score}%]\n"
+                        + _format_candidate_prompt(prev_cand_dict)
+                    )
+                    yield log_event("info", f"이전 Run #{prev_run_row['run_number']} 프롬프트 로드됨 (score: {prev_score}%)")
+
+        # 이전↔현재 프롬프트 구조적 diff
+        prompt_diff = _build_prompt_diff(prev_cand_dict, curr_cand_dict)
 
         # Phase 1 분석에서 추출된 Reference 요약 기준
         reference_summary_criteria = ""
@@ -107,21 +239,74 @@ async def run_phase6(run_id: int) -> AsyncGenerator[str, None]:
         delta_summary = f"개선: {len(improved)}건, 회귀: {len(regressed)}건"
         delta_analysis = json.dumps(deltas[:50], ensure_ascii=False)  # 최대 50건
 
-        # 회귀 케이스 상세
+        # 회귀 케이스 상세 (이전/현재 중간출력 비교 포함)
         regression_details = []
         for r in regressed[:10]:
             async with db.execute(
-                "SELECT reason FROM case_results WHERE run_id=? AND case_id=?",
+                "SELECT reason, intermediate_outputs FROM case_results WHERE run_id=? AND case_id=?",
                 (run_id, r["case_id"])
             ) as cursor:
-                reason_row = await cursor.fetchone()
+                curr_row = await cursor.fetchone()
+
+            # 이전 Run의 중간출력 조회
+            prev_io_text = "(이전 중간출력 없음)"
+            if prev_run_id:
+                try:
+                    async with db.execute(
+                        "SELECT intermediate_outputs FROM case_results WHERE run_id=? AND case_id=?",
+                        (prev_run_id, r["case_id"])
+                    ) as cursor:
+                        prev_io_row = await cursor.fetchone()
+                    if prev_io_row and prev_io_row["intermediate_outputs"]:
+                        prev_io_text = _format_intermediate(prev_io_row["intermediate_outputs"])
+                except Exception:
+                    pass
+
+            curr_io_text = _format_intermediate(
+                curr_row["intermediate_outputs"] if curr_row else None
+            )
+
             regression_details.append({
                 "case_id": r["case_id"],
-                "prev": r["prev_evaluation"],
-                "curr": r["curr_evaluation"],
-                "reason": reason_row["reason"] if reason_row else ""
+                "prev_eval": r["prev_evaluation"],
+                "curr_eval": r["curr_evaluation"],
+                "reason": curr_row["reason"] if curr_row else "",
+                "prev_intermediate": prev_io_text,
+                "curr_intermediate": curr_io_text,
             })
         regression_analysis = json.dumps(regression_details, ensure_ascii=False)
+
+        # 중간 출력 패턴 분석 (오답/과답 케이스에서 샘플 최대 5건)
+        intermediate_output_analysis = "(중간 출력 없음)"
+        try:
+            async with db.execute(
+                """SELECT case_id, intermediate_outputs, evaluation
+                   FROM case_results
+                   WHERE run_id=? AND evaluation IN ('오답','과답') AND intermediate_outputs IS NOT NULL
+                   LIMIT 5""",
+                (run_id,)
+            ) as cursor:
+                io_rows = [dict(row) for row in await cursor.fetchall()]
+            if io_rows:
+                io_parts = []
+                for r in io_rows:
+                    try:
+                        io_data = json.loads(r['intermediate_outputs'])
+                    except Exception:
+                        io_data = {}
+                    lines = [f"케이스 {r['case_id']} ({r['evaluation']}):"]
+                    for var_name, info in io_data.items():
+                        if isinstance(info, dict) and "node" in info:
+                            content = (info.get("content") or "")[:300]
+                            lines.append(f"  [Node {info['node']}] {var_name}: {content}")
+                        else:
+                            # 하위 호환: 구조화 이전 데이터
+                            lines.append(f"  {var_name}: {str(info)[:300]}")
+                    io_parts.append("\n".join(lines))
+                intermediate_output_analysis = "\n\n".join(io_parts)
+                yield log_event("info", f"중간 출력 샘플 {len(io_rows)}건 수집됨")
+        except Exception:
+            pass  # 마이그레이션 전 DB 호환
 
         yield log_event("info", f"Delta 분석: {delta_summary}")
         yield log_event("info", "gpt-oss-120B에게 전략 수립 요청 중...")
@@ -130,12 +315,15 @@ async def run_phase6(run_id: int) -> AsyncGenerator[str, None]:
         prompt = prompt_template.format(
             generation_task=generation_task,
             current_prompt=current_prompt_text,
+            previous_prompt=previous_prompt_text,
+            prompt_diff=prompt_diff,
             reference_summary_criteria=reference_summary_criteria or "(첫 Run이거나 분석 데이터 없음)",
             current_score=round(current_score * 100, 1),
             learning_rate=learning_rate,
             experiment_history=experiment_history,
             delta_analysis=delta_analysis,
-            regression_analysis=regression_analysis
+            regression_analysis=regression_analysis,
+            intermediate_output_analysis=intermediate_output_analysis,
         )
 
         try:
@@ -157,6 +345,7 @@ async def run_phase6(run_id: int) -> AsyncGenerator[str, None]:
             "effective": result.get("effective_elements", []),
             "harmful": result.get("harmful_elements", []),
             "next_direction": result.get("next_direction", ""),
+            "constraints": result.get("constraints", ""),
         }
 
         await db.execute(

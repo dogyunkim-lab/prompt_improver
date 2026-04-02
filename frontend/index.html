@@ -450,6 +450,18 @@ h1, h2, h3, h4 { font-weight: 600; }
 .file-drop input[type=file] { display: none; }
 .file-drop .file-name { margin-top: 6px; font-size: 12px; color: #cba6f7; font-weight: 600; }
 
+/* ── Phase 2 System/User 탭 + 입출력 변수 ── */
+.prompt-role-tabs { display: flex; gap: 4px; margin-bottom: 6px; }
+.role-tab { padding: 3px 10px; font-size: 11px; border: 1px solid #ddd; border-radius: 4px; cursor: pointer; background: #f5f5f5; }
+.role-tab.active { background: #4a6cf7; color: #fff; border-color: #4a6cf7; }
+.node-io { font-size: 11px; color: #888; margin-top: 4px; }
+.node-io code { background: #f0f0f0; padding: 1px 4px; border-radius: 3px; font-size: 11px; }
+.io-label { font-weight: 600; color: #666; }
+.prompt-text { font-size: 12px; color: #555; line-height: 1.6; white-space: pre-wrap; background: #fafafa; padding: 8px; border-radius: 4px; max-height: 300px; overflow-y: auto; }
+.intermediate-outputs { margin-top: 8px; }
+.intermediate-outputs summary { font-size: 12px; color: #4a6cf7; cursor: pointer; }
+.intermediate-outputs pre { font-size: 11px; background: #f8f8f8; padding: 8px; border-radius: 4px; max-height: 200px; overflow-y: auto; }
+
 /* ── Utility ── */
 .hidden { display: none !important; }
 .mt8 { margin-top: 8px; }
@@ -1421,18 +1433,6 @@ function updatePhaseTabsFromRunData() {
     setPhaseStatus(5, 'done');
     setPhaseStatus(6, state.phaseStatus[6] || 'idle');
   }
-  // 새로고침 후 running 상태인 Phase가 있으면 SSE 재연결 + 중단 버튼 표시
-  [1, 2, 3, 4, 6].forEach(num => {
-    const ph = phases[num] || {};
-    if (ph.status === 'running') {
-      state.submitting = true;
-      const btn = document.getElementById(num === 3 ? 'btn-p3-execute' : `btn-p${num}-run`);
-      const cancelBtn = document.getElementById(`btn-p${num}-cancel`);
-      if (btn) { btn.disabled = true; btn.classList.add('hidden'); }
-      if (cancelBtn) cancelBtn.classList.remove('hidden');
-      connectSSE(num);
-    }
-  });
 }
 
 // ════════════════════════════════════════════
@@ -1672,6 +1672,19 @@ function populateRunData() {
   if (p6.status === 'completed' && p6.next_direction) {
     document.getElementById('p6-next-run-section').classList.remove('hidden');
   }
+
+  // ── 새로고침 복원: running 상태인 Phase → SSE 재연결 + 중단 버튼 표시 ──
+  [1, 2, 3, 4, 6].forEach(num => {
+    const ph = phases[num] || {};
+    if (ph.status === 'running') {
+      state.submitting = true;
+      const btn = document.getElementById(num === 3 ? 'btn-p3-execute' : `btn-p${num}-run`);
+      const cancelBtn = document.getElementById(`btn-p${num}-cancel`);
+      if (btn) { btn.disabled = true; btn.classList.add('hidden'); }
+      if (cancelBtn) cancelBtn.classList.remove('hidden');
+      connectSSE(num);
+    }
+  });
 }
 
 // ════════════════════════════════════════════
@@ -2147,6 +2160,27 @@ document.getElementById('btn-p2-run').addEventListener('click', async () => {
   await runPhase(2);
 });
 
+function _renderNodeContent(np, candidateId, nodeIdx) {
+  const hasSeparate = np.system_prompt || np.user_prompt;
+  const promptHtml = hasSeparate
+    ? `<div class="prompt-role-tabs">
+         <span class="role-tab active" onclick="switchPromptRole(this, '${esc(candidateId)}', ${nodeIdx}, 'system')">System</span>
+         <span class="role-tab" onclick="switchPromptRole(this, '${esc(candidateId)}', ${nodeIdx}, 'user')">User</span>
+       </div>
+       <pre class="prompt-text" id="prompt-role-${esc(candidateId)}-${nodeIdx}">${esc(np.system_prompt || '(없음)')}</pre>`
+    : `<pre class="prompt-text">${esc(np.content || '')}</pre>`;
+
+  const ioHtml = np.input_vars && np.input_vars.length
+    ? `<div class="node-io">
+         <span class="io-label">입력:</span> ${np.input_vars.map(v => `<code>{{${esc(v)}}}</code>`).join(' ')}
+         <span class="io-label" style="margin-left:12px;">출력:</span> <code>${esc(np.output_var || 'generated')}</code>
+       </div>`
+    : '';
+
+  return promptHtml + ioHtml +
+    (np.reasoning ? `<span class="reasoning-badge">추론: ${esc(np.reasoning)}</span>` : '');
+}
+
 function renderP2Candidates(candidates) {
   const container = document.getElementById('p2-candidate-cards');
   if (!candidates || !candidates.length) {
@@ -2157,6 +2191,7 @@ function renderP2Candidates(candidates) {
   container.innerHTML = candidates.map(c => {
     const isSelected = selId && selId == c.id;
     const stepCount = c.node_count || (c.node_prompts ? c.node_prompts.length : 1);
+    const firstNp = c.node_prompts && c.node_prompts[0];
     return `
     <div class="candidate-card ${c.label === 'FINAL' ? 'final' : ''} ${isSelected ? 'selected' : ''}" id="p2-card-${esc(c.id)}">
       <div class="cc-label">후보 ${esc(c.label || 'A')} (${stepCount}-Step)</div>
@@ -2167,10 +2202,8 @@ function renderP2Candidates(candidates) {
           <span class="npt-tab ${i===0?'active':''}" onclick="selectNodeTab('${esc(c.id)}', ${i}, this)">Step ${i+1}</span>
         `).join('')}
       </div>
-      <div id="npt-content-${esc(c.id)}" style="font-size:12px;color:#555;line-height:1.6;">
-        ${c.node_prompts && c.node_prompts[0] ? esc(c.node_prompts[0].content || '') : ''}
-        ${c.node_prompts && c.node_prompts[0] && c.node_prompts[0].reasoning ?
-          `<span class="reasoning-badge">추론: ${esc(c.node_prompts[0].reasoning)}</span>` : ''}
+      <div id="npt-content-${esc(c.id)}">
+        ${firstNp ? _renderNodeContent(firstNp, c.id, 0) : ''}
       </div>
       <button class="btn-select-candidate" onclick="selectCandidate(${c.id})">${isSelected ? '✓ 선택됨' : '이 후보 선택'}</button>
     </div>`;
@@ -2190,8 +2223,22 @@ function selectNodeTab(candidateId, idx, el) {
   const np = c.node_prompts[idx];
   const contentDiv = document.getElementById(`npt-content-${candidateId}`);
   if (contentDiv && np) {
-    contentDiv.innerHTML = esc(np.content || '') +
-      (np.reasoning ? `<span class="reasoning-badge">추론: ${esc(np.reasoning)}</span>` : '');
+    contentDiv.innerHTML = _renderNodeContent(np, candidateId, idx);
+  }
+}
+
+function switchPromptRole(el, candidateId, nodeIdx, role) {
+  el.parentElement.querySelectorAll('.role-tab').forEach(t => t.classList.remove('active'));
+  el.classList.add('active');
+  const candidates = window._p2Candidates || [];
+  const c = candidates.find(c => c.id == candidateId || String(c.id) === candidateId);
+  if (!c || !c.node_prompts) return;
+  const np = c.node_prompts[nodeIdx];
+  const contentEl = document.getElementById(`prompt-role-${candidateId}-${nodeIdx}`);
+  if (contentEl && np) {
+    contentEl.textContent = role === 'system'
+      ? (np.system_prompt || '(없음)')
+      : (np.user_prompt || '(없음)');
   }
 }
 
@@ -2423,6 +2470,16 @@ function toggleP4CaseDetail(tr) {
     }
     detailDiv.appendChild(field);
   });
+
+  // 중간 노드 출력 표시 (접기/펴기)
+  const ioHtml = renderIntermediateOutputs(c.intermediate_outputs);
+  if (ioHtml) {
+    const ioField = document.createElement('div');
+    ioField.style.width = '100%';
+    ioField.style.marginTop = '8px';
+    ioField.innerHTML = ioHtml;
+    detailDiv.appendChild(ioField);
+  }
 
   const td = document.createElement('td');
   td.colSpan = 6;
@@ -2770,6 +2827,17 @@ function toggleP5CaseDetail(tr) {
     }
     detailDiv.appendChild(field);
   });
+
+  // 중간 노드 출력 표시 (접기/펴기)
+  const ioHtml5 = renderIntermediateOutputs(c.intermediate_outputs);
+  if (ioHtml5) {
+    const ioField = document.createElement('div');
+    ioField.style.width = '100%';
+    ioField.style.marginTop = '8px';
+    ioField.innerHTML = ioHtml5;
+    detailDiv.appendChild(ioField);
+  }
+
   const td = document.createElement('td');
   td.colSpan = 7;
   td.appendChild(detailDiv);
@@ -3356,6 +3424,29 @@ function esc(str) {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
+}
+
+function renderIntermediateOutputs(io) {
+  if (!io || typeof io !== 'object' || Object.keys(io).length === 0) return '';
+  const items = Object.entries(io).map(([varName, info]) => {
+    if (info && typeof info === 'object' && info.node) {
+      // 구조화된 형태: {node: "A", content: "..."}
+      return `<div style="margin-bottom:6px;">
+        <span style="font-weight:600;color:#4a6cf7;">Node ${esc(info.node)}</span>
+        <code style="margin-left:4px;background:#f0f0f0;padding:1px 4px;border-radius:3px;font-size:11px;">${esc(varName)}</code>
+        <div style="margin-top:2px;color:#555;font-size:12px;white-space:pre-wrap;">${esc(info.content || '')}</div>
+      </div>`;
+    }
+    // 하위 호환: 구조화 이전 데이터 (flat string)
+    return `<div style="margin-bottom:6px;">
+      <code style="background:#f0f0f0;padding:1px 4px;border-radius:3px;font-size:11px;">${esc(varName)}</code>
+      <div style="margin-top:2px;color:#555;font-size:12px;white-space:pre-wrap;">${esc(typeof info === 'string' ? info : JSON.stringify(info, null, 2))}</div>
+    </div>`;
+  }).join('');
+  return `<details class="intermediate-outputs">
+    <summary>중간 노드 출력</summary>
+    <div style="padding:8px;">${items}</div>
+  </details>`;
 }
 </script>
 </body>

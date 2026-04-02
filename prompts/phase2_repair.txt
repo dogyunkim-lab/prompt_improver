@@ -20,7 +20,10 @@
   "repaired_nodes": [
     {{
       "node_label": "C",
-      "prompt": "누락된 노드의 전체 프롬프트 텍스트",
+      "system_prompt": "누락된 노드의 시스템 프롬프트 (역할 정의, 규칙, 제약조건)",
+      "user_prompt": "누락된 노드의 사용자 프롬프트 템플릿 ({{{{변수명}}}} 형태로 변수 사용)",
+      "input_vars": ["stt", "draft"],
+      "output_var": "generated",
       "reasoning": true
     }}
   ]
@@ -29,6 +32,9 @@
 주의사항:
 - repaired_nodes에는 누락된 노드만 포함하라.
 - 기존 노드와의 일관성을 유지하라.
+- system_prompt + user_prompt 쌍으로 작성하라 (prompt 필드 사용 금지).
+- input_vars: 이 노드가 필요로 하는 입력 변수 목록이다.
+- output_var: 이 노드가 출력하는 변수명이다.
 - STT 오전사 헷지 규칙을 포함하라:
   "STT에서 문맥상 의미가 불명확한 표현은 임의로 해석하거나 추론하지 말고
    원문 그대로 유지하거나 해당 부분을 생략하라."

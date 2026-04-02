@@ -39,7 +39,8 @@ def _detect_reason_field(cases: list) -> str:
 
 
 async def _call_gpt_case(case: dict, prompt_template: str, eval_field: str, reason_field: str,
-                         current_prompt: str = "", generation_task: str = "") -> dict:
+                         current_prompt: str = "", generation_task: str = "",
+                         intermediate_outputs: str = "") -> dict:
     """단일 케이스 GPT 분석. DB 조작 없음 — asyncio.gather에서 병렬 실행 가능."""
     case_prompt = prompt_template.format(
         stt=case.get("stt", ""),
@@ -51,6 +52,7 @@ async def _call_gpt_case(case: dict, prompt_template: str, eval_field: str, reas
         case_id=case.get("id", ""),
         current_prompt=current_prompt,
         generation_task=generation_task,
+        intermediate_outputs=intermediate_outputs or "(중간 출력 없음)",
     )
     raw = await call_gpt([{"role": "user", "content": case_prompt}], reasoning="high")
     result = _extract_json(raw)
@@ -212,11 +214,29 @@ async def run_phase1(run_id: int) -> AsyncGenerator[str, None]:
         case_analyses = []
         sem = asyncio.Semaphore(CONCURRENT)
 
+        # Continue 모드: 이전 Run의 intermediate_outputs 조회
+        prev_intermediate_map = {}
+        if run.get("base_run_id"):
+            try:
+                async with db.execute(
+                    "SELECT case_id, intermediate_outputs FROM case_results WHERE run_id=? AND intermediate_outputs IS NOT NULL",
+                    (run["base_run_id"],)
+                ) as cursor:
+                    for row in await cursor.fetchall():
+                        prev_intermediate_map[row["case_id"]] = row["intermediate_outputs"]
+                if prev_intermediate_map:
+                    yield log_event("info", f"이전 Run의 중간 출력 {len(prev_intermediate_map)}건 로드됨")
+            except Exception:
+                pass  # 마이그레이션 전 DB 호환
+
         async def _analyze_with_sem(c):
             async with sem:
+                # 이전 Run의 중간 출력 첨부
+                case_intermediate = prev_intermediate_map.get(str(c.get("id", "")), "")
                 return await _call_gpt_case(c, prompt_template, eval_field, reason_field,
                                             current_prompt=current_prompt,
-                                            generation_task=generation_task)
+                                            generation_task=generation_task,
+                                            intermediate_outputs=case_intermediate)
 
         # ── 배치 병렬 분석 ────────────────────────────────────────────────────
         done_count = 0

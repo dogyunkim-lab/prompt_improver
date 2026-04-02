@@ -5,6 +5,7 @@ from fastapi import APIRouter, HTTPException, UploadFile, File
 from pydantic import BaseModel
 from typing import Optional
 from database import get_db
+from services.phase2_design import _build_candidates_with_nodes
 
 router = APIRouter(tags=["runs"])
 
@@ -111,7 +112,17 @@ async def create_run(task_id: int, body: RunCreate):
                             model = cand.get(model_key, "qwen3-30b")
                             reasoning = "ON" if cand.get(reasoning_key) else "OFF"
                             lines.append(f"=== Node {label} (모델: {model}, 추론: {reasoning}) ===")
-                            lines.append(prompt_text.strip())
+                            # system/user 분리 표시
+                            sys_p = cand.get(f"node_{label.lower()}_system_prompt")
+                            usr_p = cand.get(f"node_{label.lower()}_user_prompt")
+                            if sys_p:
+                                lines.append("[SYSTEM PROMPT]")
+                                lines.append(sys_p.strip())
+                            if usr_p:
+                                lines.append("[USER PROMPT]")
+                                lines.append(usr_p.strip())
+                            if not sys_p and not usr_p:
+                                lines.append(prompt_text.strip())  # 하위 호환
                             lines.append("")
 
                     if node_idx > 0:
@@ -217,27 +228,7 @@ async def get_run(run_id: int):
             candidates = [dict(row) for row in await cursor.fetchall()]
 
         if candidates:
-            candidates_with_nodes = []
-            for cand in candidates:
-                node_prompts = []
-                for label, content_key, reason_key in [
-                    ("A", "node_a_prompt", "node_a_reasoning"),
-                    ("B", "node_b_prompt", "node_b_reasoning"),
-                    ("C", "node_c_prompt", "node_c_reasoning"),
-                ]:
-                    if cand.get(content_key):
-                        node_prompts.append({
-                            "label": label,
-                            "content": cand[content_key],
-                            "reasoning": bool(cand.get(reason_key)),
-                        })
-                candidates_with_nodes.append({
-                    "id": cand["id"],
-                    "label": cand["candidate_label"],
-                    "node_count": cand.get("node_count", len(node_prompts)),
-                    "rationale": cand.get("design_rationale", ""),
-                    "node_prompts": node_prompts,
-                })
+            candidates_with_nodes = _build_candidates_with_nodes(candidates)
             # Phase 2 데이터에 candidates 주입 (output_data에 없을 경우 대비)
             if 2 not in phases:
                 phases[2] = {"status": "completed"}
@@ -295,7 +286,7 @@ async def get_run(run_id: int):
         if 4 in phases:
             try:
                 async with db.execute(
-                    """SELECT case_id, stt, reference, generated, evaluation, reason
+                    """SELECT case_id, stt, reference, generated, evaluation, reason, intermediate_outputs
                        FROM case_results WHERE run_id=? ORDER BY rowid""",
                     (run_id,)
                 ) as cursor:
@@ -308,6 +299,7 @@ async def get_run(run_id: int):
                         "stt": r["stt"] or "",
                         "reference": r["reference"] or "",
                         "generated": r["generated"] or "",
+                        "intermediate_outputs": json.loads(r["intermediate_outputs"]) if r.get("intermediate_outputs") else {},
                     } for r in p4_rows]
             except Exception:
                 pass

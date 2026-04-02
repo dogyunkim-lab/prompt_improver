@@ -146,6 +146,21 @@ async def init_db():
             # 업로드 원본 파일명 저장
             "ALTER TABLE runs ADD COLUMN judge_original_name TEXT",
             "ALTER TABLE runs ADD COLUMN prompt_original_name TEXT",
+            # Phase 2 System/User 프롬프트 분리 (prompt_candidates)
+            "ALTER TABLE prompt_candidates ADD COLUMN node_a_system_prompt TEXT",
+            "ALTER TABLE prompt_candidates ADD COLUMN node_a_user_prompt TEXT",
+            "ALTER TABLE prompt_candidates ADD COLUMN node_a_input_vars TEXT",
+            "ALTER TABLE prompt_candidates ADD COLUMN node_a_output_var TEXT",
+            "ALTER TABLE prompt_candidates ADD COLUMN node_b_system_prompt TEXT",
+            "ALTER TABLE prompt_candidates ADD COLUMN node_b_user_prompt TEXT",
+            "ALTER TABLE prompt_candidates ADD COLUMN node_b_input_vars TEXT",
+            "ALTER TABLE prompt_candidates ADD COLUMN node_b_output_var TEXT",
+            "ALTER TABLE prompt_candidates ADD COLUMN node_c_system_prompt TEXT",
+            "ALTER TABLE prompt_candidates ADD COLUMN node_c_user_prompt TEXT",
+            "ALTER TABLE prompt_candidates ADD COLUMN node_c_input_vars TEXT",
+            "ALTER TABLE prompt_candidates ADD COLUMN node_c_output_var TEXT",
+            # Phase 3 중간 노드 출력 저장 (case_results)
+            "ALTER TABLE case_results ADD COLUMN intermediate_outputs TEXT",
         ]
         for stmt in _migration_stmts:
             try:

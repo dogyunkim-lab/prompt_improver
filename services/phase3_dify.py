@@ -35,7 +35,8 @@ async def verify_dify_connection(object_id: str) -> tuple[bool, str]:
         return False, f"Dify 연결 실패: {e}"
 
 
-async def call_dify_workflow(object_id: str, stt: str) -> str:
+async def call_dify_workflow(object_id: str, stt: str) -> dict:
+    """Dify 워크플로우 실행 후 전체 outputs dict 반환 (중간 노드 출력 포함)."""
     token = await get_dify_token(object_id)
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
     payload = {
@@ -47,7 +48,7 @@ async def call_dify_workflow(object_id: str, stt: str) -> str:
         response = await client.post(f"{DIFY_BASE_URL}/workflows/run", json=payload, headers=headers)
         response.raise_for_status()
         data = response.json()
-        return data["data"]["outputs"]["generated"]
+        return data["data"]["outputs"]
 
 
 async def run_phase3(run_id: int) -> AsyncGenerator[str, None]:
@@ -88,6 +89,33 @@ async def run_phase3(run_id: int) -> AsyncGenerator[str, None]:
         total = len(cases)
         yield log_event("info", f"총 {total}개 케이스 실행 시작")
 
+        # 선택된 후보의 output_var → node 매핑 조회
+        output_var_to_node = {}
+        async with db.execute(
+            "SELECT selected_candidate_id FROM runs WHERE id=?", (run_id,)
+        ) as cursor:
+            run_row = await cursor.fetchone()
+        selected_cand_id = run_row["selected_candidate_id"] if run_row else None
+
+        if selected_cand_id:
+            async with db.execute(
+                """SELECT node_a_output_var, node_b_output_var, node_c_output_var,
+                          node_a_prompt, node_b_prompt, node_c_prompt
+                   FROM prompt_candidates WHERE id=?""",
+                (selected_cand_id,)
+            ) as cursor:
+                cand_row = await cursor.fetchone()
+            if cand_row:
+                cand_row = dict(cand_row)
+                for label in ('a', 'b', 'c'):
+                    ov = cand_row.get(f"node_{label}_output_var")
+                    has_node = cand_row.get(f"node_{label}_prompt")
+                    if ov and has_node:
+                        output_var_to_node[ov] = label.upper()
+                if output_var_to_node:
+                    yield log_event("info",
+                        f"노드-변수 매핑: {', '.join(f'Node {v}→{k}' for k, v in output_var_to_node.items())}")
+
         semaphore = asyncio.Semaphore(DIFY_CONCURRENCY)
         completed = 0
         errors = 0
@@ -101,14 +129,27 @@ async def run_phase3(run_id: int) -> AsyncGenerator[str, None]:
                 for attempt in range(3):
                     try:
                         start_t = time.time()
-                        generated = await call_dify_workflow(
+                        outputs = await call_dify_workflow(
                             conn["object_id"],
                             case.get("stt", "")
                         )
                         elapsed = round(time.time() - start_t, 1)
+                        generated = outputs.get("generated", "")
+                        # generated 외 나머지 = 중간 노드 출력 (노드 라벨 매핑 포함)
+                        intermediate = {}
+                        for k, v in outputs.items():
+                            if k == "generated":
+                                continue
+                            node_label = output_var_to_node.get(k)
+                            if node_label:
+                                intermediate[k] = {"node": node_label, "content": str(v) if v else ""}
+                            else:
+                                intermediate[k] = {"node": "?", "content": str(v) if v else ""}
                         await db.execute(
-                            "UPDATE case_results SET generated=? WHERE run_id=? AND case_id=?",
-                            (generated, run_id, case_id)
+                            "UPDATE case_results SET generated=?, intermediate_outputs=? WHERE run_id=? AND case_id=?",
+                            (generated,
+                             json.dumps(intermediate, ensure_ascii=False) if intermediate else None,
+                             run_id, case_id)
                         )
                         await db.commit()
                         completed += 1

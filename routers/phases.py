@@ -22,6 +22,8 @@ router = APIRouter(tags=["phases"])
 _stream_queues: dict[int, dict[int, asyncio.Queue]] = {}
 # 실행 중인 백그라운드 태스크 (run_id, phase) → Task
 _running_tasks: dict[tuple, asyncio.Task] = {}
+# SSE 이벤트 로그 버퍼 — 새로고침 시 리플레이용
+_event_buffers: dict[tuple, list] = {}
 
 
 def get_queue(run_id: int, phase: int) -> asyncio.Queue:
@@ -34,9 +36,12 @@ def get_queue(run_id: int, phase: int) -> asyncio.Queue:
 
 async def _run_and_queue(generator, run_id: int, phase: int):
     from services.sse_helpers import log_event as _le, done_event as _de
+    key = (run_id, phase)
+    _event_buffers[key] = []
     q = get_queue(run_id, phase)
     try:
         async for event in generator:
+            _event_buffers.setdefault(key, []).append(event)
             await q.put(event)
     except asyncio.CancelledError:
         # 제너레이터 명시적 종료 → 내부 finally 블록에서 pending tasks 정리
@@ -44,8 +49,11 @@ async def _run_and_queue(generator, run_id: int, phase: int):
             await generator.aclose()
         except Exception:
             pass
-        await q.put(_le("warn", "사용자가 Phase를 중단했습니다."))
-        await q.put(_de("cancelled"))
+        cancel_ev1 = _le("warn", "사용자가 Phase를 중단했습니다.")
+        cancel_ev2 = _de("cancelled")
+        _event_buffers.setdefault(key, []).extend([cancel_ev1, cancel_ev2])
+        await q.put(cancel_ev1)
+        await q.put(cancel_ev2)
         try:
             db = await get_db()
             await db.execute(
@@ -61,12 +69,47 @@ async def _run_and_queue(generator, run_id: int, phase: int):
         logger.exception(f"[Phase {phase} / run {run_id}] 백그라운드 태스크 예외: {e}")
     finally:
         await q.put(None)
-        _running_tasks.pop((run_id, phase), None)
+        _running_tasks.pop(key, None)
+        # 완료 후 버퍼 정리 (메모리 절약)
+        _event_buffers.pop(key, None)
 
 
 def _create_phase_task(generator, run_id: int, phase: int) -> asyncio.Task:
     task = asyncio.create_task(_run_and_queue(generator, run_id, phase))
     _running_tasks[(run_id, phase)] = task
+
+
+def _make_stream_response(run_id: int, phase: int):
+    """SSE 스트림 응답 생성 — 버퍼 리플레이 후 큐 읽기."""
+    q = get_queue(run_id, phase)
+    key = (run_id, phase)
+
+    async def generator():
+        # 1) 큐에 남아있는 이전 이벤트 드레인 (중복 방지)
+        while not q.empty():
+            try:
+                stale = q.get_nowait()
+                if stale is None:
+                    # 이미 완료된 Phase — 버퍼만 보내고 종료
+                    buf = list(_event_buffers.get(key, []))
+                    for event in buf:
+                        yield event
+                    return
+            except asyncio.QueueEmpty:
+                break
+        # 2) 이전 이벤트 리플레이 (새로고침 복원)
+        buf = list(_event_buffers.get(key, []))
+        for event in buf:
+            yield event
+        # 3) 새 이벤트 수신
+        while True:
+            item = await q.get()
+            if item is None:
+                break
+            yield item
+
+    return StreamingResponse(generator(), media_type="text/event-stream",
+                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
     return task
 
 
@@ -100,17 +143,7 @@ async def trigger_phase1(run_id: int):
 
 @router.get("/api/runs/{run_id}/phase/1/stream")
 async def stream_phase1(run_id: int):
-    q = get_queue(run_id, 1)
-
-    async def generator():
-        while True:
-            item = await q.get()
-            if item is None:
-                break
-            yield item
-
-    return StreamingResponse(generator(), media_type="text/event-stream",
-                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+    return _make_stream_response(run_id, 1)
 
 
 # ── Phase 2 ──────────────────────────────────────────────────────────────────
@@ -134,17 +167,7 @@ async def trigger_phase2(run_id: int):
 
 @router.get("/api/runs/{run_id}/phase/2/stream")
 async def stream_phase2(run_id: int):
-    q = get_queue(run_id, 2)
-
-    async def generator():
-        while True:
-            item = await q.get()
-            if item is None:
-                break
-            yield item
-
-    return StreamingResponse(generator(), media_type="text/event-stream",
-                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+    return _make_stream_response(run_id, 2)
 
 
 # ── 후보 선택 (Phase 2→3) ────────────────────────────────────────────────────
@@ -235,17 +258,7 @@ async def execute_phase3(run_id: int):
 
 @router.get("/api/runs/{run_id}/phase/3/stream")
 async def stream_phase3(run_id: int):
-    q = get_queue(run_id, 3)
-
-    async def generator():
-        while True:
-            item = await q.get()
-            if item is None:
-                break
-            yield item
-
-    return StreamingResponse(generator(), media_type="text/event-stream",
-                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+    return _make_stream_response(run_id, 3)
 
 
 # ── Phase 4 ──────────────────────────────────────────────────────────────────
@@ -269,17 +282,7 @@ async def trigger_phase4(run_id: int):
 
 @router.get("/api/runs/{run_id}/phase/4/stream")
 async def stream_phase4(run_id: int):
-    q = get_queue(run_id, 4)
-
-    async def generator():
-        while True:
-            item = await q.get()
-            if item is None:
-                break
-            yield item
-
-    return StreamingResponse(generator(), media_type="text/event-stream",
-                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+    return _make_stream_response(run_id, 4)
 
 
 # ── Phase 5 ──────────────────────────────────────────────────────────────────
@@ -326,7 +329,7 @@ async def get_phase5(run_id: int):
             ]
 
         async with db.execute(
-            """SELECT case_id, stt, reference, generated, evaluation, reason
+            """SELECT case_id, stt, reference, generated, evaluation, reason, intermediate_outputs
                FROM case_results WHERE run_id=? ORDER BY rowid""",
             (run_id,)
         ) as cursor:
@@ -344,12 +347,19 @@ async def get_phase5(run_id: int):
         cases_with_delta = []
         for c in cases_rows:
             d = delta_map.get(c["case_id"])
+            io = {}
+            try:
+                if c.get("intermediate_outputs"):
+                    io = json.loads(c["intermediate_outputs"])
+            except Exception:
+                pass
             cases_with_delta.append({
                 "id": c["case_id"], "judge": c["evaluation"] or "",
                 "reason": c["reason"] or "", "stt": c["stt"] or "",
                 "reference": c["reference"] or "", "generated": c["generated"] or "",
                 "prev_judge": d["prev_evaluation"] if d else None,
                 "delta_type": d["delta_type"] if d else None,
+                "intermediate_outputs": io,
             })
 
         # BUG-3: 프론트 기대 구조로 전면 수정
@@ -418,14 +428,4 @@ async def trigger_phase6(run_id: int):
 
 @router.get("/api/runs/{run_id}/phase/6/stream")
 async def stream_phase6(run_id: int):
-    q = get_queue(run_id, 6)
-
-    async def generator():
-        while True:
-            item = await q.get()
-            if item is None:
-                break
-            yield item
-
-    return StreamingResponse(generator(), media_type="text/event-stream",
-                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+    return _make_stream_response(run_id, 6)
