@@ -185,14 +185,14 @@ def _build_strategy_input(
     if user_guide:
         user_guide_section = f"[사용자 전략 가이드 — 반드시 준수]\n{user_guide}"
 
-    # Reference 스타일 프로파일 (Phase 1에서 분석된 상담사 요약 기준)
-    ref_style = phase1_summary.get("reference_style_profile", "")
-    common_gaps = phase1_summary.get("common_style_gaps", "")
-    reference_style_section = ""
-    if ref_style:
-        reference_style_section = f"[Reference 요약 스타일 프로파일 — 반드시 반영]\n{ref_style}"
+    # Reference 요약 기준 (Phase 1에서 분석된 상담사의 핵심 내용 선별 기준)
+    ref_criteria = phase1_summary.get("reference_summary_criteria", "")
+    common_gaps = phase1_summary.get("common_content_gaps", "")
+    reference_criteria_section = ""
+    if ref_criteria:
+        reference_criteria_section = f"[Reference 요약 기준 — 상담사가 어떤 내용을 포함/생략하는지]\n{ref_criteria}"
         if common_gaps:
-            reference_style_section += f"\n\n[Generated의 빈번한 스타일 이탈 패턴]\n{common_gaps}"
+            reference_criteria_section += f"\n\n[Generated가 자주 빠뜨리거나 불필요하게 추가하는 내용 패턴]\n{common_gaps}"
 
     return template.format(
         generation_task=task.get("generation_task", "불편사항 요약"),
@@ -208,7 +208,7 @@ def _build_strategy_input(
         converge_context=converge_context,
         prev_run_feedback=prev_run_feedback,
         user_guide=user_guide_section,
-        reference_style=reference_style_section,
+        reference_criteria=reference_criteria_section,
     )
 
 
@@ -278,7 +278,7 @@ def _format_cases_text(cases: list) -> str:
         gen = (c.get("generated") or "")[:300]
         lines.append(f"--- 케이스 {i} (ID: {c['case_id']}) ---")
         lines.append(f"Reference 요약 기준: {c.get('reference_criteria', 'N/A')}")
-        lines.append(f"스타일 차이: {c.get('style_gap', 'N/A')}")
+        lines.append(f"요약 내용 차이: {c.get('content_gap', 'N/A')}")
         lines.append(f"오류 패턴: {c.get('error_pattern', 'N/A')}")
         lines.append(f"분석: {c.get('analysis_summary', 'N/A')}")
         lines.append(f"누락 지시: {c.get('missing_instruction', 'N/A')}")
@@ -311,9 +311,9 @@ async def _generate_single_candidate(
     if user_guide:
         user_guide_section = f"\n[사용자 전략 가이드 — 반드시 준수]\n{user_guide}\n"
 
-    reference_style_section = ""
+    reference_criteria_section = ""
     if reference_style_profile:
-        reference_style_section = f"\n[Reference 요약 스타일 — 이 스타일을 재현하는 프롬프트를 작성하라]\n{reference_style_profile}\n"
+        reference_criteria_section = f"\n[Reference 요약 기준 — LLM이 이 기준에 맞게 요약하도록 프롬프트를 작성하라]\n{reference_style_profile}\n"
 
     template = _load_prompt(CANDIDATE_PROMPT_PATH)
     prompt = template.format(
@@ -327,7 +327,7 @@ async def _generate_single_candidate(
         design_summary=design_summary,
         representative_cases=cases_text,
         user_guide=user_guide_section,
-        reference_style=reference_style_section,
+        reference_criteria=reference_criteria_section,
     )
 
     for attempt in range(max_retries + 1):
@@ -526,10 +526,10 @@ async def run_phase2(run_id: int) -> AsyncGenerator[str, None]:
         if user_guide:
             yield log_event("info", f"사용자 전략 가이드 반영: {user_guide[:80]}{'...' if len(user_guide) > 80 else ''}")
 
-        # Reference 스타일 프로파일
-        reference_style_profile = phase1_summary.get("reference_style_profile", "")
+        # Reference 요약 기준 프로파일
+        reference_style_profile = phase1_summary.get("reference_summary_criteria", "")
         if reference_style_profile:
-            yield log_event("info", f"Reference 스타일 프로파일 로드됨 ({len(reference_style_profile)}자)")
+            yield log_event("info", f"Reference 요약 기준 프로파일 로드됨 ({len(reference_style_profile)}자)")
 
         yield log_event("info", f"Design mode: {design_mode}, Learning rate: {learning_rate}")
 

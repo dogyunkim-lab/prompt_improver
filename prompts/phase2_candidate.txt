@@ -1,15 +1,18 @@
 너는 Dify 워크플로우 프롬프트 엔지니어다.
 아래 전략과 대표 오류 케이스를 참고하여 후보 "{candidate_label}"의 각 노드 프롬프트를 작성하라.
 
-[핵심 원칙]
+[핵심 원칙 — 반드시 상기하라]
+요약 Task: "{generation_task}"
 이 Task의 요약은 범용적 요약이 아니다. 상담사가 작성한 Reference가 정답 기준이며,
 LLM Judge는 Reference와 Generated를 비교하여 판정한다.
-프롬프트는 LLM이 Reference와 동일한 스타일·기준·구조로 요약하도록 유도해야 한다.
-아래 Reference 스타일을 분석하고, 이를 프롬프트에 구체적으로 반영하라.
+프롬프트는 LLM이 요약 Task의 목적에 맞는 정보를 정확히 선별하여
+Reference가 담고 있는 핵심 내용을 동일하게 요약하도록 유도해야 한다.
+아래 Reference 요약 기준을 분석하고, 이를 프롬프트에 구체적으로 반영하라.
+문체나 종결어미 같은 표면적 형식 모방이 아니라, 어떤 내용을 포함/생략하는지에 집중하라.
 
 [요약 유형]: {generation_task}
 
-{reference_style}
+{reference_criteria}
 
 [이 후보의 전략]
 - 라벨: {candidate_label}

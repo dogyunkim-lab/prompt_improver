@@ -31,6 +31,43 @@ async def run_phase6(run_id: int) -> AsyncGenerator[str, None]:
         async with db.execute("SELECT * FROM runs WHERE id=?", (run_id,)) as cursor:
             run = dict(await cursor.fetchone())
 
+        # 요약 Task 조회 (전략 수립에서 반복 참조)
+        async with db.execute("SELECT * FROM tasks WHERE id=?", (run["task_id"],)) as cursor:
+            task = dict(await cursor.fetchone())
+        generation_task = task.get("generation_task", "")
+
+        # 현재 Run에서 사용된 워크플로우 프롬프트 조회
+        current_prompt_text = "(프롬프트 정보 없음)"
+        selected_cand_id = run.get("selected_candidate_id")
+        if selected_cand_id:
+            async with db.execute(
+                "SELECT * FROM prompt_candidates WHERE id=?", (selected_cand_id,)
+            ) as cursor:
+                cand_row = await cursor.fetchone()
+            if cand_row:
+                cand = dict(cand_row)
+                prompt_parts = []
+                for label in ["a", "b", "c"]:
+                    p = cand.get(f"node_{label}_prompt")
+                    if p:
+                        reasoning = "ON" if cand.get(f"node_{label}_reasoning") else "OFF"
+                        prompt_parts.append(f"[노드 {label.upper()} (reasoning: {reasoning})]\n{p}")
+                current_prompt_text = "\n\n".join(prompt_parts) if prompt_parts else "(프롬프트 내용 없음)"
+
+        # Phase 1 분석에서 추출된 Reference 요약 기준
+        reference_summary_criteria = ""
+        async with db.execute(
+            "SELECT output_data FROM phase_results WHERE run_id=? AND phase=1 AND status='completed'",
+            (run_id,)
+        ) as cursor:
+            p1_row = await cursor.fetchone()
+        if p1_row and p1_row["output_data"]:
+            try:
+                p1_data = json.loads(p1_row["output_data"])
+                reference_summary_criteria = p1_data.get("reference_summary_criteria", "")
+            except Exception:
+                pass
+
         await db.execute(
             """INSERT INTO phase_results (run_id, phase, status, started_at)
                VALUES (?,6,'running',?)
@@ -91,6 +128,9 @@ async def run_phase6(run_id: int) -> AsyncGenerator[str, None]:
 
         prompt_template = load_prompt()
         prompt = prompt_template.format(
+            generation_task=generation_task,
+            current_prompt=current_prompt_text,
+            reference_summary_criteria=reference_summary_criteria or "(첫 Run이거나 분석 데이터 없음)",
             current_score=round(current_score * 100, 1),
             learning_rate=learning_rate,
             experiment_history=experiment_history,

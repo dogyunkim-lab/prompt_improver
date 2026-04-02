@@ -140,9 +140,9 @@ async def init_db():
             "ALTER TABLE runs ADD COLUMN prompt_file_path TEXT",
             # Phase 2 사용자 전략 가이드
             "ALTER TABLE runs ADD COLUMN user_guide TEXT",
-            # Phase 1 Reference 스타일 분석 필드
+            # Phase 1 Reference 요약 기준 분석 필드
             "ALTER TABLE case_results ADD COLUMN reference_criteria TEXT",
-            "ALTER TABLE case_results ADD COLUMN style_gap TEXT",
+            "ALTER TABLE case_results ADD COLUMN content_gap TEXT",
         ]
         for stmt in _migration_stmts:
             try:

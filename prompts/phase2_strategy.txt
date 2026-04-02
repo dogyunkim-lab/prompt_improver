@@ -2,15 +2,18 @@
 아래 Phase 1 분석 결과를 바탕으로 3개의 프롬프트 후보 구조를 결정하라.
 이 단계에서는 프롬프트 텍스트를 작성하지 않고 구조만 설계한다.
 
-[핵심 원칙]
+[핵심 원칙 — 반드시 상기하라]
+요약 Task: "{generation_task}"
 이 Task의 요약은 범용적 요약이 아니다. 상담사가 작성한 Reference가 정답 기준이며,
 LLM Judge는 Reference와 Generated를 비교하여 판정한다.
-따라서 LLM이 정답 판정을 받으려면 Reference와 동일한 스타일·기준·구조로 요약해야 한다.
-프롬프트 설계 시 가장 중요한 것은 Reference의 요약 스타일을 LLM이 재현하도록 유도하는 것이다.
+정답 판정을 받으려면 LLM이 Reference와 동일한 핵심 내용을 요약해야 한다.
+프롬프트 설계의 핵심은 LLM이 요약 Task의 목적에 맞는 정보를 정확히 선별하여
+Reference가 담고 있는 핵심 내용을 빠짐없이 요약하도록 유도하는 것이다.
+문체나 종결어미 같은 표면적 형식이 아니라 "어떤 내용을 포함/생략하는가"에 집중하라.
 
 [요약 유형]: {generation_task}
 
-{reference_style}
+{reference_criteria}
 
 [Phase 1 분석 통계]
 - 버킷별 카운트: {bucket_counts}

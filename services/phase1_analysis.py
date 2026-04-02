@@ -39,7 +39,7 @@ def _detect_reason_field(cases: list) -> str:
 
 
 async def _call_gpt_case(case: dict, prompt_template: str, eval_field: str, reason_field: str,
-                         current_prompt: str = "") -> dict:
+                         current_prompt: str = "", generation_task: str = "") -> dict:
     """단일 케이스 GPT 분석. DB 조작 없음 — asyncio.gather에서 병렬 실행 가능."""
     case_prompt = prompt_template.format(
         stt=case.get("stt", ""),
@@ -50,6 +50,7 @@ async def _call_gpt_case(case: dict, prompt_template: str, eval_field: str, reas
         judge_reason=case.get(reason_field, ""),
         case_id=case.get("id", ""),
         current_prompt=current_prompt,
+        generation_task=generation_task,
     )
     raw = await call_gpt([{"role": "user", "content": case_prompt}], reasoning="high")
     result = _extract_json(raw)
@@ -62,6 +63,11 @@ async def run_phase1(run_id: int) -> AsyncGenerator[str, None]:
     try:
         async with db.execute("SELECT * FROM runs WHERE id=?", (run_id,)) as cursor:
             run = dict(await cursor.fetchone())
+
+        # 요약 Task 조회 (모든 분석에서 반복 참조)
+        async with db.execute("SELECT * FROM tasks WHERE id=?", (run["task_id"],)) as cursor:
+            task = dict(await cursor.fetchone())
+        generation_task = task.get("generation_task", "")
 
         # phase_result 초기화 (기존 output_data 보존)
         await db.execute(
@@ -205,7 +211,8 @@ async def run_phase1(run_id: int) -> AsyncGenerator[str, None]:
         async def _analyze_with_sem(c):
             async with sem:
                 return await _call_gpt_case(c, prompt_template, eval_field, reason_field,
-                                            current_prompt=current_prompt)
+                                            current_prompt=current_prompt,
+                                            generation_task=generation_task)
 
         # ── 배치 병렬 분석 ────────────────────────────────────────────────────
         done_count = 0
@@ -244,9 +251,9 @@ async def run_phase1(run_id: int) -> AsyncGenerator[str, None]:
                 error_pattern = result.get("error_pattern", "")
                 improvement_suggestion = result.get("improvement_suggestion", "")
 
-                # Reference 스타일 분석 필드
+                # Reference 요약 기준 분석 필드
                 reference_criteria = result.get("reference_criteria", "")
-                style_gap = result.get("style_gap", "")
+                content_gap = result.get("content_gap", "")
 
                 # ── DB 저장 (확장 필드 포함) ──
                 await db.execute(
@@ -255,7 +262,7 @@ async def run_phase1(run_id: int) -> AsyncGenerator[str, None]:
                            hallucination_detected=?, judge_agreement=?, judge_disagreement=?,
                            missing_instruction=?, violated_instruction=?,
                            error_pattern=?, improvement_suggestion=?,
-                           reference_criteria=?, style_gap=?
+                           reference_criteria=?, content_gap=?
                        WHERE run_id=? AND case_id=?""",
                     (result.get("bucket", ""),
                      result.get("analysis_summary", ""),
@@ -268,7 +275,7 @@ async def run_phase1(run_id: int) -> AsyncGenerator[str, None]:
                      error_pattern,
                      improvement_suggestion,
                      reference_criteria,
-                     style_gap,
+                     content_gap,
                      run_id, str(case.get("id", "")))
                 )
 
@@ -394,7 +401,7 @@ async def _summarize_all(case_analyses: list, n: int) -> dict:
     error_pattern_groups = {}  # 오류 패턴별 그룹핑
 
     reference_criteria_samples = []
-    style_gap_samples = []
+    content_gap_samples = []
 
     for a in case_analyses:
         b = a.get("bucket", "")
@@ -410,13 +417,13 @@ async def _summarize_all(case_analyses: list, n: int) -> dict:
         if ep:
             error_pattern_groups.setdefault(ep, []).append(a.get("case_id", ""))
 
-        # Reference 스타일 분석 수집
+        # Reference 요약 기준 분석 수집
         rc = a.get("reference_criteria", "")
         if rc:
             reference_criteria_samples.append(rc)
-        sg = a.get("style_gap", "")
-        if sg:
-            style_gap_samples.append(sg)
+        cg = a.get("content_gap", "")
+        if cg:
+            content_gap_samples.append(cg)
 
         # 프롬프트로 개선 가능한 케이스 (prompt_missing / model_behavior)
         if b in ("prompt_missing", "model_behavior"):
@@ -432,7 +439,7 @@ async def _summarize_all(case_analyses: list, n: int) -> dict:
                 "error_pattern": ep,
                 "improvement_suggestion": a.get("improvement_suggestion", ""),
                 "reference_criteria": a.get("reference_criteria", ""),
-                "style_gap": a.get("style_gap", ""),
+                "content_gap": a.get("content_gap", ""),
                 # Phase 2에서 구체적 예시로 활용할 원문 텍스트
                 "stt": a.get("_stt", ""),
                 "reference": a.get("_reference", ""),
@@ -464,39 +471,39 @@ async def _summarize_all(case_analyses: list, n: int) -> dict:
 
     analyses_text = json.dumps(analyses_for_gpt, ensure_ascii=False, indent=2)
 
-    # Reference 스타일 샘플 텍스트 (GPT에 전달용, 최대 15개)
+    # Reference 요약 기준 샘플 텍스트 (GPT에 전달용, 최대 15개)
     ref_criteria_text = "\n".join(f"- {s}" for s in reference_criteria_samples[:15]) if reference_criteria_samples else "(없음)"
-    style_gap_text = "\n".join(f"- {s}" for s in style_gap_samples[:15]) if style_gap_samples else "(없음)"
+    content_gap_text = "\n".join(f"- {s}" for s in content_gap_samples[:15]) if content_gap_samples else "(없음)"
 
     prompt = f"""아래는 오답/과답 케이스 {n}개의 분석 데이터다.
 이를 바탕으로 다음 JSON만 출력하라 (설명 없이 JSON만):
 {{
   "top_issues": ["가장 자주 발생하는 오류 유형 설명 1", "설명 2", "설명 3"],
   "recommended_focus": "Phase 2 프롬프트 개선 시 가장 중요하게 다뤄야 할 방향. 구체적인 프롬프트 수정 방향을 포함하여 4~6문장으로 작성하라.",
-  "reference_style_profile": "아래 [케이스별 Reference 요약 기준]을 종합하여, 상담사들이 공통으로 적용하는 요약 스타일·기준·구조를 5~8문장으로 정리하라. 어떤 정보를 포함/생략하는지, 어떤 구조·순서·상세도를 사용하는지, LLM이 이 스타일을 재현하려면 프롬프트에 어떤 지시가 필요한지를 포함하라.",
-  "common_style_gaps": "아래 [스타일 차이 목록]을 종합하여, Generated가 Reference 스타일에서 가장 자주 벗어나는 패턴 3~5가지를 나열하라."
+  "reference_summary_criteria": "아래 [케이스별 Reference 요약 기준]을 종합하여, 상담사들이 공통으로 적용하는 요약 기준을 5~8문장으로 정리하라. 요약 Task의 목적에 따라 어떤 정보를 핵심으로 포함하고 어떤 정보를 생략하는지, LLM이 동일한 핵심 내용을 요약하려면 프롬프트에 어떤 지시가 필요한지를 포함하라. 문체나 종결어미 같은 표면적 형식이 아니라 내용 선별 기준에 집중하라.",
+  "common_content_gaps": "아래 [요약 내용 차이 목록]을 종합하여, Generated가 Reference 대비 가장 자주 빠뜨리거나 불필요하게 추가하는 내용 패턴 3~5가지를 나열하라."
 }}
 
 [케이스별 Reference 요약 기준]
 {ref_criteria_text}
 
-[스타일 차이 목록]
-{style_gap_text}
+[요약 내용 차이 목록]
+{content_gap_text}
 
 [분석 데이터]
 {analyses_text}"""
 
     top_issues = []
     recommended_focus = ""
-    reference_style_profile = ""
-    common_style_gaps = ""
+    reference_summary_criteria = ""
+    common_content_gaps = ""
     try:
         raw = await call_gpt([{"role": "user", "content": prompt}], reasoning="high")
         gpt = _extract_json(raw)
         top_issues = gpt.get("top_issues", [])
         recommended_focus = gpt.get("recommended_focus", "")
-        reference_style_profile = gpt.get("reference_style_profile", "")
-        common_style_gaps = gpt.get("common_style_gaps", "")
+        reference_summary_criteria = gpt.get("reference_summary_criteria", "")
+        common_content_gaps = gpt.get("common_content_gaps", "")
     except Exception:
         # fallback: analysis_summary에서 대표 텍스트 추출
         top_issues = list({
@@ -513,8 +520,8 @@ async def _summarize_all(case_analyses: list, n: int) -> dict:
         "prompt_improvable_cases": prompt_improvable,
         "judge_dispute_cases": judge_dispute_list,
         "recommended_focus": recommended_focus,
-        "reference_style_profile": reference_style_profile,
-        "common_style_gaps": common_style_gaps,
+        "reference_summary_criteria": reference_summary_criteria,
+        "common_content_gaps": common_content_gaps,
     }
 
 
