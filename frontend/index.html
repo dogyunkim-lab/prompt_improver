@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Prompt Improver</title>
 <script src="/static/chart.umd.min.js"></script>
-<script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+<script async src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
 <style>
 /* ── Reset & Base ── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -1421,6 +1421,18 @@ function updatePhaseTabsFromRunData() {
     setPhaseStatus(5, 'done');
     setPhaseStatus(6, state.phaseStatus[6] || 'idle');
   }
+  // 새로고침 후 running 상태인 Phase가 있으면 SSE 재연결 + 중단 버튼 표시
+  [1, 2, 3, 4, 6].forEach(num => {
+    const ph = phases[num] || {};
+    if (ph.status === 'running') {
+      state.submitting = true;
+      const btn = document.getElementById(num === 3 ? 'btn-p3-execute' : `btn-p${num}-run`);
+      const cancelBtn = document.getElementById(`btn-p${num}-cancel`);
+      if (btn) { btn.disabled = true; btn.classList.add('hidden'); }
+      if (cancelBtn) cancelBtn.classList.remove('hidden');
+      connectSSE(num);
+    }
+  });
 }
 
 // ════════════════════════════════════════════
@@ -2487,6 +2499,10 @@ function downloadCasesJSON(cases, filename) {
 }
 
 function downloadCasesXLSX(cases, columns, filename) {
+  if (typeof XLSX === 'undefined') {
+    alert('XLSX 라이브러리가 로드되지 않았습니다. JSON 다운로드를 이용해주세요.');
+    return;
+  }
   const data = cases.map(c => {
     const row = {};
     columns.forEach(col => row[col.header] = c[col.key] || '');
